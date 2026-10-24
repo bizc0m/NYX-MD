@@ -66,7 +66,8 @@ Le <!--n1-->budget validé<!--/n1--> pour Q1. Livraison fin mars<!--n2-->.
 ```
 
 - Repères invisibles dans tout lecteur Markdown ; `<!--nX-->` seul = note ponctuelle ; note sans repère = orpheline (conservée).
-- Bloc : dernier commentaire `<!-- notes v1` (ou `notes:<app> v1`) suivi seulement d'espaces. Une note par ligne, texte échappé
+- Bloc : dernier commentaire `<!-- notes v1` (ou `notes:<app> v1`) du texte. Du texte peut le suivre (tapé après coup) :
+  il reste du texte ordinaire, et la modification de note suivante replace le bloc en fin de fichier. Une note par ligne, texte échappé
   (`\n` retour à la ligne, `\\`, `--\>` pour `-->`). Lignes illisibles conservées (`extra`) et réécrites telles quelles.
 - Couleurs : jaune (défaut), vert, bleu, rose, rouge, violet, orange, gris.
 - Positions en runes dans le texte **avec** repères. `start`/`end` d'une note = contenu entre les repères.

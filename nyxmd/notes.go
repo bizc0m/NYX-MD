@@ -217,13 +217,16 @@ type bnote struct {
 }
 
 type parsedNotes struct {
-	text       string
-	bodyEnd    int // début du bloc (lignes vides comprises), ou len(text)
-	blockFound bool
-	notes      []bnote
-	extra      []string
-	markers    []bmarker
-	diags      []Diagnostic
+	text string
+	// Bloc [blockStart, blockEnd) en octets ; vide (len(text), len(text)) s'il n'y en a pas.
+	// En fin de fichier, il inclut les lignes vides qui le précèdent ; au milieu du texte, la fin de ligne qui le suit.
+	blockStart, blockEnd int
+	blockAtEnd           bool // seulement des espaces après le bloc
+	blockFound           bool
+	notes                []bnote
+	extra                []string
+	markers              []bmarker
+	diags                []Diagnostic
 }
 
 func runeOffset(s string, b int) int { return utf8.RuneCountInString(s[:b]) }
@@ -287,8 +290,9 @@ func diag(sev, code, msg, name string, s, e int) Diagnostic {
 }
 
 func parseNotes(text string) *parsedNotes {
-	p := &parsedNotes{text: text, bodyEnd: len(text)}
-	// Bloc : le dernier, suivi seulement d'espaces.
+	p := &parsedNotes{text: text, blockStart: len(text), blockEnd: len(text)}
+	// Bloc : le dernier. Du texte tapé après lui reste du texte ordinaire ; la prochaine
+	// modification de note replace le bloc en fin de fichier.
 	for a := len(text); ; {
 		a = strings.LastIndex(text[:a], "<!--")
 		if a < 0 {
@@ -299,16 +303,27 @@ func parseNotes(text string) *parsedNotes {
 			continue
 		}
 		ce := strings.Index(text[cs:], "-->")
-		if ce < 0 || strings.TrimSpace(text[cs+ce+3:]) != "" {
+		if ce < 0 {
 			continue
 		}
 		ce += cs
 		p.blockFound = true
-		start := a
-		for start > 0 && strings.ContainsRune("\n\r \t", rune(text[start-1])) {
-			start--
+		if strings.TrimSpace(text[ce+3:]) == "" {
+			p.blockAtEnd = true
+			start := a
+			for start > 0 && strings.ContainsRune("\n\r \t", rune(text[start-1])) {
+				start--
+			}
+			p.blockStart, p.blockEnd = start, len(text)
+		} else {
+			end := ce + 3
+			if strings.HasPrefix(text[end:], "\r\n") {
+				end += 2
+			} else if strings.HasPrefix(text[end:], "\n") {
+				end++
+			}
+			p.blockStart, p.blockEnd = a, end
 		}
-		p.bodyEnd = start
 		seen := map[string]bool{}
 		off := cs
 		for _, line := range strings.SplitAfter(text[cs:ce], "\n") {
@@ -342,8 +357,41 @@ func parseNotes(text string) *parsedNotes {
 		}
 		break
 	}
-	p.markers = findMarkers(text[:p.bodyEnd])
+	for _, m := range findMarkers(text) {
+		if m.e <= p.blockStart || m.s >= p.blockEnd {
+			p.markers = append(p.markers, m)
+		}
+	}
 	return p
+}
+
+// body : le texte sans le bloc (repères compris).
+func (p *parsedNotes) body() string { return p.text[:p.blockStart] + p.text[p.blockEnd:] }
+
+// rebuild réécrit le texte en remplaçant chaque repère par marker(m) et le bloc par block(texte du bloc).
+func (p *parsedNotes) rebuild(marker func(m *bmarker) string, block func(string) string) string {
+	var b strings.Builder
+	b.Grow(len(p.text))
+	prev := 0
+	blockDone := !p.blockFound
+	flushBlock := func(upTo int) {
+		if !blockDone && p.blockStart <= upTo {
+			b.WriteString(p.text[prev:p.blockStart])
+			b.WriteString(block(p.text[p.blockStart:p.blockEnd]))
+			prev = p.blockEnd
+			blockDone = true
+		}
+	}
+	for i := range p.markers {
+		m := &p.markers[i]
+		flushBlock(m.s)
+		b.WriteString(p.text[prev:m.s])
+		b.WriteString(marker(m))
+		prev = m.e
+	}
+	flushBlock(len(p.text))
+	b.WriteString(p.text[prev:])
+	return b.String()
 }
 
 // pairs renvoie, par identifiant, le premier repère ouvrant et la fermeture qui le suit.
@@ -401,7 +449,7 @@ func ParseNotes(text string) NotesDoc {
 		}
 	}
 	if p.blockFound {
-		doc.Block = &Span{runeOffset(text, p.bodyEnd), utf8.RuneCountInString(text)}
+		doc.Block = &Span{runeOffset(text, p.blockStart), runeOffset(text, p.blockEnd)}
 	}
 	doc.Masked = maskNotes(p)
 	return doc
@@ -411,9 +459,8 @@ func maskNotes(p *parsedNotes) string {
 	if len(p.markers) == 0 && !p.blockFound {
 		return p.text
 	}
-	var b strings.Builder
-	b.Grow(len(p.text))
-	blank := func(s string) {
+	blank := func(s string) string {
+		var b strings.Builder
 		for _, r := range s {
 			if r == '\n' || r == '\r' {
 				b.WriteRune(r)
@@ -421,39 +468,25 @@ func maskNotes(p *parsedNotes) string {
 				b.WriteByte(' ')
 			}
 		}
+		return b.String()
 	}
-	prev := 0
-	for _, m := range p.markers {
-		b.WriteString(p.text[prev:m.s])
-		blank(p.text[m.s:m.e])
-		prev = m.e
-	}
-	b.WriteString(p.text[prev:p.bodyEnd])
-	blank(p.text[p.bodyEnd:])
-	return b.String()
+	return p.rebuild(func(m *bmarker) string { return blank(p.text[m.s:m.e]) }, blank)
 }
 
 // MaskNotes : voir NotesDoc.Masked.
 func MaskNotes(text string) string { return maskNotes(parseNotes(text)) }
 
-// body sans repères ; le bloc est retiré avec les lignes vides qui le précèdent.
+// cleanBody : texte sans repères (ou avec anchor(m) à leur place) et sans bloc.
 func (p *parsedNotes) cleanBody(anchor func(m *bmarker) string) string {
-	var b strings.Builder
-	prev := 0
-	for i := range p.markers {
-		m := &p.markers[i]
-		b.WriteString(p.text[prev:m.s])
-		if anchor != nil {
-			b.WriteString(anchor(m))
-		}
-		prev = m.e
+	if anchor == nil {
+		anchor = func(*bmarker) string { return "" }
 	}
-	b.WriteString(p.text[prev:p.bodyEnd])
-	return b.String()
+	return p.rebuild(anchor, func(string) string { return "" })
 }
 
-func finishBody(body string, hadBlock bool) string {
-	if !hadBlock {
+// finishBody : un bloc en fin de fichier laisse une seule fin de ligne.
+func finishBody(body string, blockAtEnd bool) string {
+	if !blockAtEnd {
 		return body
 	}
 	body = strings.TrimRight(body, " \t\r\n")
@@ -466,7 +499,7 @@ func finishBody(body string, hadBlock bool) string {
 // StripNotes renvoie le texte seul : repères et bloc de notes retirés (export « propre »).
 func StripNotes(text string) string {
 	p := parseNotes(text)
-	return finishBody(p.cleanBody(nil), p.blockFound)
+	return finishBody(p.cleanBody(nil), p.blockAtEnd)
 }
 
 // NotesToFootnotes convertit la couche de notes en notes de bas de page Markdown standard :
@@ -517,7 +550,7 @@ func NotesToFootnotes(text string) string {
 		return ""
 	})
 	if len(defs) == 0 {
-		return finishBody(body, p.blockFound)
+		return finishBody(body, p.blockAtEnd)
 	}
 	body = strings.TrimRight(body, " \t\r\n")
 	if body != "" {
@@ -581,27 +614,45 @@ func AddNote(text string, start, end int, color, body string) (string, string, e
 	if !validColor(color) {
 		return "", "", &NoteError{NoteErrUnknownColor, "couleur inconnue « " + color + " » (" + strings.Join(NoteColors, ", ") + ")"}
 	}
-	limit := utf8.RuneCountInString(text[:p.bodyEnd])
+	limit := utf8.RuneCountInString(text)
 	if start < 0 || end < start || end > limit {
 		return "", "", &NoteError{NoteErrOutOfRange, "passage hors du texte (0 à " + strconv.Itoa(limit) + ")"}
 	}
 	bs, _ := byteOffset(text, start)
 	be, _ := byteOffset(text, end)
+	if p.blockFound && bs < p.blockEnd && be > p.blockStart && !(p.blockAtEnd && bs == p.blockStart && be == p.blockStart) {
+		return "", "", &NoteError{NoteErrOutOfRange, "le passage touche le bloc de notes"}
+	}
 	for _, m := range p.markers {
 		if (bs > m.s && bs < m.e) || (be > m.s && be < m.e) {
 			return "", "", &NoteError{NoteErrInsideMarker, "le passage commence ou finit dans un repère de note"}
 		}
 	}
 	id := p.nextID()
-	src := text[:p.bodyEnd]
-	var nb string
+	var nt string
 	if be > bs {
-		nb = src[:bs] + "<!--" + id + "-->" + src[bs:be] + "<!--/" + id + "-->" + src[be:]
+		nt = text[:bs] + "<!--" + id + "-->" + text[bs:be] + "<!--/" + id + "-->" + text[be:]
 	} else {
-		nb = src[:bs] + "<!--" + id + "-->" + src[bs:]
+		nt = text[:bs] + "<!--" + id + "-->" + text[bs:]
+	}
+	// Garde-fou : le « --> » d'un repère ne doit pas refermer un commentaire laissé ouvert dans le texte.
+	p2 := parseNotes(nt)
+	want := 1
+	if be > bs {
+		want = 2
+	}
+	got := 0
+	for _, m := range p2.markers {
+		if m.id == id {
+			got++
+		}
+	}
+	if got != want || p2.blockFound != p.blockFound ||
+		(p.blockFound && strings.TrimSpace(p2.text[p2.blockStart:p2.blockEnd]) != strings.TrimSpace(p.text[p.blockStart:p.blockEnd])) {
+		return "", "", &NoteError{NoteErrInsideMarker, "le passage touche un commentaire HTML resté ouvert"}
 	}
 	notes := append(append([]bnote{}, p.notes...), bnote{id, color, body})
-	return serializeNotes(nb, notes, p.extra), id, nil
+	return serializeNotes(p2.body(), notes, p.extra), id, nil
 }
 
 // UpdateNote change la couleur (vide = inchangée) et le texte d'une note du bloc.
@@ -617,7 +668,7 @@ func UpdateNote(text, id, color, body string) (string, error) {
 				notes[i].color = color
 			}
 			notes[i].text = body
-			return serializeNotes(text[:p.bodyEnd], notes, p.extra), nil
+			return serializeNotes(p.body(), notes, p.extra), nil
 		}
 	}
 	return "", &NoteError{NoteErrUnknownNote, "note « " + id + " » absente du bloc"}
@@ -635,21 +686,21 @@ func DeleteNote(text, id string) (string, error) {
 		}
 		notes = append(notes, n)
 	}
-	var b strings.Builder
-	prev := 0
 	for _, m := range p.markers {
-		if m.id != id {
-			continue
+		if m.id == id {
+			found = true
 		}
-		found = true
-		b.WriteString(text[prev:m.s])
-		prev = m.e
 	}
-	b.WriteString(text[prev:p.bodyEnd])
+	nt := p.rebuild(func(m *bmarker) string {
+		if m.id == id {
+			return ""
+		}
+		return p.text[m.s:m.e]
+	}, func(b string) string { return b })
 	if !found {
 		return "", &NoteError{NoteErrUnknownNote, "note « " + id + " » introuvable"}
 	}
-	return serializeNotes(b.String(), notes, p.extra), nil
+	return serializeNotes(parseNotes(nt).body(), notes, p.extra), nil
 }
 
 // NotedDocument prépare un document de recherche à partir d'un texte annoté :

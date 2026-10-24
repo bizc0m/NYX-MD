@@ -7,7 +7,7 @@ Format SemVer. Toute modification du comportement est listée ici avant publicat
 Interface C : version 3 (ajouts uniquement ; les opérations 0.2.0 sont inchangées, mais l'adaptateur Swift exige l'interface 3).
 
 - **Couche de notes** (`nyxmd/notes.go`) : passages annotés `<!--n1-->…<!--/n1-->` (ou repère seul = note ponctuelle),
-  bloc `<!-- notes v1 … -->` en fin de fichier (`notes:<app> v1` accepté en lecture), lignes `[n1] (couleur) texte` échappées
+  bloc `<!-- notes v1 … -->` en fin de fichier (`notes:<app> v1` accepté en lecture ; du texte tapé après le bloc ne le casse pas), lignes `[n1] (couleur) texte` échappées
   (`\n`, `\\`, `--\>`). 8 couleurs : jaune (défaut), vert, bleu, rose, rouge, violet, orange, gris.
   - Lecture : `ParseNotes` (notes, repères, bloc, diagnostics, texte masqué). Notes orphelines et lignes illisibles conservées.
   - Exports : `StripNotes` (texte seul), `NotesToFootnotes` (notes de bas de page Markdown standard `[^k]`).

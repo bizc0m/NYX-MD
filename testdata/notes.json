@@ -1,9 +1,10 @@
 {
   "contract": 1,
-  "comment": "Contrat de conformité de la couche de notes (NYX-MD 0.3). Positions en caractères Unicode. Tout adaptateur doit passer ces vecteurs.",
+  "comment": "Contrat de conformité de la couche de notes (NYX-MD 0.3). Positions en caractères Unicode. Tout adaptateur doit passer ces vecteurs. Le bloc est le dernier bloc « notes v1 » du texte ; du texte peut le suivre (il est replacé en fin de fichier à la modification suivante).",
   "documents": {
     "reunion": "Le <!--n1-->budget validé<!--/n1--> pour Q1.\nLivraison fin mars<!--n2-->.\n\n<!-- notes v1\n[n1] (rouge) Vérifier avec compta #urgent\n[n2] Trop juste ?\\nÀ revoir\n[n3] (vert) orpheline\n-->\n",
-    "abimee": "A<!--/n9--> b<!--n4-->c<!--n4-->\n\n<!-- notes:simpleedit v1\n[n4] (fuchsia) x\nligne libre\n[n4] doublon\n-->\n"
+    "abimee": "A<!--/n9--> b<!--n4-->c<!--n4-->\n\n<!-- notes:simpleedit v1\n[n4] (fuchsia) x\nligne libre\n[n4] doublon\n-->\n",
+    "apres": "Avant <!--n1-->x<!--/n1-->.\n\n<!-- notes v1\n[n1] (vert) a\n-->\nAprès Z\n"
   },
   "parse": [
     {
@@ -54,6 +55,25 @@
         "ligne libre",
         "[n4] doublon"
       ]
+    },
+    {
+      "doc": "apres",
+      "notes": [
+        {
+          "id": "n1",
+          "color": "vert",
+          "text": "a",
+          "start": 15,
+          "end": 16,
+          "orphan": false
+        }
+      ],
+      "block": {
+        "start": 29,
+        "end": 61
+      },
+      "diagnostics": [],
+      "masked": "Avant          x          .\n\n             \n             \n   \nAprès Z\n"
     }
   ],
   "strip": [
@@ -64,12 +84,20 @@
     {
       "text": "Sans notes.\n\n",
       "output": "Sans notes.\n\n"
+    },
+    {
+      "doc": "apres",
+      "output": "Avant x.\n\nAprès Z\n"
     }
   ],
   "footnotes": [
     {
       "doc": "reunion",
       "output": "Le budget validé[^1] pour Q1.\nLivraison fin mars[^2].\n\n[^1]: Vérifier avec compta #urgent\n[^2]: Trop juste ?\n    À revoir\n"
+    },
+    {
+      "doc": "apres",
+      "output": "Avant x[^1].\n\nAprès Z\n\n[^1]: a\n"
     }
   ],
   "edits": [
@@ -141,6 +169,39 @@
       "color": "",
       "body": "x",
       "error": "unknown_note"
+    },
+    {
+      "op": "update",
+      "doc": "apres",
+      "id": "n1",
+      "color": "",
+      "body": "c",
+      "output": "Avant <!--n1-->x<!--/n1-->.\n\nAprès Z\n\n<!-- notes v1\n[n1] (vert) c\n-->\n"
+    },
+    {
+      "op": "delete",
+      "doc": "apres",
+      "id": "n1",
+      "output": "Avant x.\n\nAprès Z\n"
+    },
+    {
+      "op": "add",
+      "doc": "apres",
+      "start": 30,
+      "end": 32,
+      "color": "",
+      "body": "b",
+      "error": "out_of_range"
+    },
+    {
+      "op": "add",
+      "doc": "apres",
+      "start": 61,
+      "end": 66,
+      "color": "",
+      "body": "b",
+      "id": "n2",
+      "output": "Avant <!--n1-->x<!--/n1-->.\n\n<!--n2-->Après<!--/n2--> Z\n\n<!-- notes v1\n[n1] (vert) a\n[n2] (jaune) b\n-->\n"
     }
   ],
   "search": [
@@ -193,6 +254,11 @@
       "doc": "reunion",
       "query": "note:budget",
       "match": false
+    },
+    {
+      "doc": "apres",
+      "query": "note:a AND Après",
+      "match": true
     }
   ]
 }
