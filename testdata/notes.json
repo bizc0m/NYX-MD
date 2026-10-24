@@ -1,0 +1,198 @@
+{
+  "contract": 1,
+  "comment": "Contrat de conformité de la couche de notes (NYX-MD 0.3). Positions en caractères Unicode. Tout adaptateur doit passer ces vecteurs.",
+  "documents": {
+    "reunion": "Le <!--n1-->budget validé<!--/n1--> pour Q1.\nLivraison fin mars<!--n2-->.\n\n<!-- notes v1\n[n1] (rouge) Vérifier avec compta #urgent\n[n2] Trop juste ?\\nÀ revoir\n[n3] (vert) orpheline\n-->\n",
+    "abimee": "A<!--/n9--> b<!--n4-->c<!--n4-->\n\n<!-- notes:simpleedit v1\n[n4] (fuchsia) x\nligne libre\n[n4] doublon\n-->\n"
+  },
+  "parse": [
+    {
+      "doc": "reunion",
+      "notes": [
+        {
+          "id": "n1",
+          "color": "rouge",
+          "text": "Vérifier avec compta #urgent",
+          "start": 12,
+          "end": 25,
+          "orphan": false
+        },
+        {
+          "id": "n2",
+          "color": "jaune",
+          "text": "Trop juste ?\nÀ revoir",
+          "start": 72,
+          "end": 72,
+          "orphan": false
+        },
+        {
+          "id": "n3",
+          "color": "vert",
+          "text": "orpheline",
+          "start": -1,
+          "end": -1,
+          "orphan": true
+        }
+      ],
+      "block": {
+        "start": 73,
+        "end": 185
+      },
+      "diagnostics": [],
+      "masked": "Le          budget validé           pour Q1.\nLivraison fin mars         .\n\n             \n                                         \n                           \n                     \n   \n"
+    },
+    {
+      "doc": "abimee",
+      "diagnostics": [
+        "unknown_color",
+        "invalid_note_line",
+        "duplicate_note",
+        "unpaired_marker",
+        "duplicate_marker"
+      ],
+      "extra": [
+        "ligne libre",
+        "[n4] doublon"
+      ]
+    }
+  ],
+  "strip": [
+    {
+      "doc": "reunion",
+      "output": "Le budget validé pour Q1.\nLivraison fin mars.\n"
+    },
+    {
+      "text": "Sans notes.\n\n",
+      "output": "Sans notes.\n\n"
+    }
+  ],
+  "footnotes": [
+    {
+      "doc": "reunion",
+      "output": "Le budget validé[^1] pour Q1.\nLivraison fin mars[^2].\n\n[^1]: Vérifier avec compta #urgent\n[^2]: Trop juste ?\n    À revoir\n"
+    }
+  ],
+  "edits": [
+    {
+      "op": "add",
+      "text": "Café crème.\n",
+      "start": 0,
+      "end": 4,
+      "color": "",
+      "body": "chaud",
+      "id": "n1",
+      "output": "<!--n1-->Café<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (jaune) chaud\n-->\n"
+    },
+    {
+      "op": "add",
+      "text": "<!--n1-->Café<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (jaune) chaud\n-->\n",
+      "start": 11,
+      "end": 11,
+      "color": "bleu",
+      "body": "fin --> ici\nligne 2",
+      "id": "n2",
+      "output": "<!--n1-->Ca<!--n2-->fé<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (jaune) chaud\n[n2] (bleu) fin --\\> ici\\nligne 2\n-->\n"
+    },
+    {
+      "op": "update",
+      "text": "<!--n1-->Ca<!--n2-->fé<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (jaune) chaud\n[n2] (bleu) fin --\\> ici\\nligne 2\n-->\n",
+      "id": "n1",
+      "color": "vert",
+      "body": "tiède",
+      "output": "<!--n1-->Ca<!--n2-->fé<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (vert) tiède\n[n2] (bleu) fin --\\> ici\\nligne 2\n-->\n"
+    },
+    {
+      "op": "delete",
+      "text": "Ca<!--n2-->fé crème.\n\n<!-- notes v1\n[n2] (bleu) x\n-->\n",
+      "id": "n2",
+      "output": "Café crème.\n"
+    },
+    {
+      "op": "add",
+      "doc": "reunion",
+      "start": 4,
+      "end": 8,
+      "color": "",
+      "body": "x",
+      "error": "inside_marker"
+    },
+    {
+      "op": "add",
+      "text": "abc",
+      "start": 0,
+      "end": 9,
+      "color": "",
+      "body": "x",
+      "error": "out_of_range"
+    },
+    {
+      "op": "add",
+      "text": "abc",
+      "start": 0,
+      "end": 1,
+      "color": "fuchsia",
+      "body": "x",
+      "error": "unknown_color"
+    },
+    {
+      "op": "update",
+      "text": "abc",
+      "id": "n1",
+      "color": "",
+      "body": "x",
+      "error": "unknown_note"
+    }
+  ],
+  "search": [
+    {
+      "doc": "reunion",
+      "query": "note:compta",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "note:\"trop juste\"",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "note:compt*",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "couleur:rouge",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "color:rouge AND NOT couleur:bleu",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "couleur:bleu",
+      "match": false
+    },
+    {
+      "doc": "reunion",
+      "query": "n1",
+      "match": false
+    },
+    {
+      "doc": "reunion",
+      "query": "notes",
+      "match": false
+    },
+    {
+      "doc": "reunion",
+      "query": "budget note:urgent",
+      "match": true
+    },
+    {
+      "doc": "reunion",
+      "query": "note:budget",
+      "match": false
+    }
+  ]
+}

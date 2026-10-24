@@ -1,4 +1,4 @@
-# API NYX-MD 0.2.0
+# API NYX-MD 0.3.0
 
 Un moteur Go unique (`nyxmd/`), exposé par :
 
@@ -24,6 +24,8 @@ En Swift, `NyxText.nsRange(start:end:in:)` et `NyxText.scalarOffset(utf16:in:)` 
 | `*`, `?` | joker : zéro ou plusieurs caractères / un caractère |
 | `a NEAR/n b` | au plus n mots entre a et b, dans les deux sens |
 | `#tag`, `@entité`, `@"Nom Prénom"` | métadonnées fournies par l'appelant (jamais déduites du texte) |
+| `note:mot`, `note:"expression"` | dans le texte d'une note (0.3, `Document.Notes`) |
+| `couleur:rouge`, `color:rouge` | couleur d'une note (0.3, `Document.Colors`) |
 
 - Priorité : parenthèses, négation, NEAR, AND, OR. **Opérateurs en majuscules** (`and` est un mot).
 - **Mots entiers** : `client` ne trouve pas `clientèle` (utiliser `client*`). Casse ignorée, **accents conservés** (`archive` ≠ `archivé`).
@@ -51,6 +53,38 @@ Swift : `NyxQuery(_:options:)` (compilée une fois, `match`, `find`, `terms`, li
 | `missing_closing_parenthesis` | parenthèse ouvrante non fermée |
 | `invalid_proximity` | `NEAR/x` invalide |
 | `near_operand` | NEAR appliqué à un groupe ou une métadonnée |
+
+## Couche de notes (0.3)
+
+```markdown
+Le <!--n1-->budget validé<!--/n1--> pour Q1. Livraison fin mars<!--n2-->.
+
+<!-- notes v1
+[n1] (rouge) Vérifier avec compta #urgent
+[n2] Trop juste ?\nÀ revoir
+-->
+```
+
+- Repères invisibles dans tout lecteur Markdown ; `<!--nX-->` seul = note ponctuelle ; note sans repère = orpheline (conservée).
+- Bloc : dernier commentaire `<!-- notes v1` (ou `notes:<app> v1`) suivi seulement d'espaces. Une note par ligne, texte échappé
+  (`\n` retour à la ligne, `\\`, `--\>` pour `-->`). Lignes illisibles conservées (`extra`) et réécrites telles quelles.
+- Couleurs : jaune (défaut), vert, bleu, rose, rouge, violet, orange, gris.
+- Positions en runes dans le texte **avec** repères. `start`/`end` d'une note = contenu entre les repères.
+
+| Go | Swift | Interface C | Rôle |
+|---|---|---|---|
+| `ParseNotes(text) NotesDoc` | `NyxNotes.parse` | `notes.parse` | notes, repères, bloc, diagnostics, `masked` |
+| `StripNotes(text)` | `NyxNotes.strip` | `notes.strip` | export « texte seul » |
+| `NotesToFootnotes(text)` | `NyxNotes.footnotes` | `notes.footnotes` | export notes de bas de page `[^k]` (orphelines omises) |
+| `AddNote(text, start, end, color, body)` | `NyxNotes.add` | `notes.add` | → texte, `id` (nX suivant) |
+| `UpdateNote(text, id, color, body)` | `NyxNotes.update` | `notes.update` | couleur vide = inchangée |
+| `DeleteNote(text, id)` | `NyxNotes.delete` | `notes.delete` | retire note et repères, garde le passage |
+| `NotedDocument(text, tags, entities)` | `NyxNotes.searchDocument` | — | document de recherche masqué + notes + couleurs |
+| `NoteColors`, `DefaultNoteColor` | `NyxNotes.colors()` | `notes.colors` | |
+
+Erreurs (`NoteError` / `NyxError.code`) : `out_of_range`, `inside_marker`, `unknown_color`, `unknown_note`.
+Diagnostics de lecture (avertissements) : `invalid_note_line`, `duplicate_note`, `duplicate_marker`, `unpaired_marker`,
+`marker_without_note`, `unknown_color`.
 
 ## Variables
 
@@ -82,9 +116,10 @@ Swift : `NyxVariables.render/validate/references/complete/parsePersonal/markdown
 ## Interface C (`nyxmd_call`)
 
 Requête JSON → réponse JSON `{"ok": true, …}` ou `{"ok": false, "error": {"code", "message", "position"}}`.
-Libérer chaque réponse avec `nyxmd_free`. Version d'interface (`abi`) : **2**. Opérations : `version`,
+Libérer chaque réponse avec `nyxmd_free`. Version d'interface (`abi`) : **3**. Opérations : `version`,
 `search.compile` (→ `handle`), `search.release`, `search.validate`, `search.match`, `search.find`
 (ces trois dernières acceptent `handle` ou `query` + `options`), `variables.render`, `variables.validate`, `variables.references`, `variables.complete`,
-`variables.parse_personal`, `markdown.link`. Erreurs d'appel : `bad_request`, `unknown_op`, `unknown_handle`, `too_many_handles`, `internal_error`
+`variables.parse_personal`, `markdown.link`, `notes.parse`, `notes.strip`, `notes.footnotes`, `notes.add`, `notes.update`,
+`notes.delete`, `notes.colors` (champs `text`, `start`, `end`, `color`, `body`, `id`). Erreurs d'appel : `bad_request`, `unknown_op`, `unknown_handle`, `too_many_handles`, `internal_error`
 (Swift ajoute `abi_mismatch` si la bibliothèque ne correspond pas à l'adaptateur)
 (une panique Go est convertie en erreur, jamais propagée).

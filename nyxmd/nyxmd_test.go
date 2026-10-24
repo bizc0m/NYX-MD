@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type searchVectors struct {
@@ -397,6 +398,172 @@ func FuzzFind(f *testing.F) {
 				if !ok || s.Start < 0 || s.End > n || s.Start >= s.End || (i > 0 && s.Start <= spans[i-1].End-1) {
 					t.Fatalf("bad spans %v for %q in %q", spans, q, text)
 				}
+			}
+		}
+	})
+}
+
+// Couche de notes : vecteurs communs testdata/notes.json.
+type notesContract struct {
+	Contract  int               `json:"contract"`
+	Documents map[string]string `json:"documents"`
+	Parse     []struct {
+		Doc         string   `json:"doc"`
+		Notes       []Note   `json:"notes"`
+		Block       *Span    `json:"block"`
+		Diagnostics []string `json:"diagnostics"`
+		Extra       []string `json:"extra"`
+		Masked      *string  `json:"masked"`
+	} `json:"parse"`
+	Strip, Footnotes []struct {
+		Doc    string `json:"doc"`
+		Text   string `json:"text"`
+		Output string `json:"output"`
+	}
+	Edits []struct {
+		Op, Doc, Text, ID, Color, Body, Output, Error string
+		Start, End                                    int
+	} `json:"edits"`
+	Search []struct {
+		Doc, Query string
+		Match      bool
+	} `json:"search"`
+}
+
+func TestNotesContract(t *testing.T) {
+	var c notesContract
+	load(t, "../testdata/notes.json", &c)
+	if c.Contract != 1 {
+		t.Fatalf("contract %d", c.Contract)
+	}
+	text := func(doc, txt string) string {
+		if doc != "" {
+			return c.Documents[doc]
+		}
+		return txt
+	}
+	for _, p := range c.Parse {
+		d := ParseNotes(c.Documents[p.Doc])
+		if p.Notes != nil && !reflect.DeepEqual(d.Notes, p.Notes) {
+			t.Errorf("%s notes = %+v, attendu %+v", p.Doc, d.Notes, p.Notes)
+		}
+		if p.Block != nil && (d.Block == nil || *d.Block != *p.Block) {
+			t.Errorf("%s block = %v", p.Doc, d.Block)
+		}
+		var codes []string
+		for _, g := range d.Diagnostics {
+			codes = append(codes, g.Code)
+		}
+		if len(codes) != len(p.Diagnostics) || (len(codes) > 0 && !reflect.DeepEqual(codes, p.Diagnostics)) {
+			t.Errorf("%s diagnostics = %v, attendu %v", p.Doc, codes, p.Diagnostics)
+		}
+		if p.Extra != nil && !reflect.DeepEqual(d.Extra, p.Extra) {
+			t.Errorf("%s extra = %q", p.Doc, d.Extra)
+		}
+		if p.Masked != nil && d.Masked != *p.Masked {
+			t.Errorf("%s masked = %q", p.Doc, d.Masked)
+		}
+		src := c.Documents[p.Doc]
+		if utf8.RuneCountInString(d.Masked) != utf8.RuneCountInString(src) || strings.Count(d.Masked, "\n") != strings.Count(src, "\n") {
+			t.Errorf("%s : le masque doit garder longueur et lignes", p.Doc)
+		}
+	}
+	for _, s := range c.Strip {
+		if got := StripNotes(text(s.Doc, s.Text)); got != s.Output {
+			t.Errorf("strip = %q, attendu %q", got, s.Output)
+		}
+	}
+	for _, s := range c.Footnotes {
+		if got := NotesToFootnotes(text(s.Doc, s.Text)); got != s.Output {
+			t.Errorf("footnotes = %q, attendu %q", got, s.Output)
+		}
+	}
+	for i, e := range c.Edits {
+		src := text(e.Doc, e.Text)
+		var out, id string
+		var err error
+		switch e.Op {
+		case "add":
+			out, id, err = AddNote(src, e.Start, e.End, e.Color, e.Body)
+		case "update":
+			out, err = UpdateNote(src, e.ID, e.Color, e.Body)
+		case "delete":
+			out, err = DeleteNote(src, e.ID)
+		}
+		if e.Error != "" {
+			if ne, ok := err.(*NoteError); !ok || ne.Code != e.Error {
+				t.Errorf("edit %d : erreur %v, attendu %s", i, err, e.Error)
+			}
+			continue
+		}
+		if err != nil || out != e.Output || (e.Op == "add" && id != e.ID) {
+			t.Errorf("edit %d (%s) = %q %q %v\nattendu %q %q", i, e.Op, out, id, err, e.Output, e.ID)
+		}
+		// Réversibilité : l'export propre ne dépend pas des notes.
+		if StripNotes(out) != StripNotes(src) {
+			t.Errorf("edit %d : le texte seul a changé", i)
+		}
+	}
+	for _, s := range c.Search {
+		q, err := Compile(s.Query)
+		if err != nil {
+			t.Errorf("%s : %v", s.Query, err)
+			continue
+		}
+		if got := q.Match(NotedDocument(c.Documents[s.Doc], nil, nil)); got != s.Match {
+			t.Errorf("%s = %v, attendu %v", s.Query, got, s.Match)
+		}
+	}
+}
+
+func TestNotesRoundTripAndMaskPositions(t *testing.T) {
+	src := "Été <!--n1-->très<!--/n1--> chaud 🔥.\n"
+	out, id, err := AddNote(src, 28, 33, "violet", "emoji")
+	if err != nil || id != "n2" {
+		t.Fatalf("%v %s", err, id)
+	}
+	d := ParseNotes(out)
+	if len(d.Notes) != 1 || d.Notes[0].ID != "n2" {
+		// n1 n'a pas d'entrée dans le bloc : seul n2 est une note ; n1 reste un repère signalé.
+		t.Fatalf("notes %+v", d.Notes)
+	}
+	r := []rune(out)
+	if got := string(r[d.Notes[0].Start:d.Notes[0].End]); got != "chaud" {
+		t.Errorf("passage %q", got)
+	}
+	ok, spans := mustCompile(t, "chaud").Find(NotedDocument(out, nil, nil))
+	if !ok || string(r[spans[0].Start:spans[0].End]) != "chaud" {
+		t.Errorf("find %v %v", ok, spans)
+	}
+}
+
+func mustCompile(t *testing.T, q string) *Query {
+	t.Helper()
+	c, err := Compile(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// Textes arbitraires : jamais de panique, masque de même longueur, ajout de note sans effet sur le texte seul.
+func FuzzNotes(f *testing.F) {
+	f.Add("Le <!--n1-->budget<!--/n1--> ok.\n\n<!-- notes v1\n[n1] (rouge) x\n-->\n", 0, 2)
+	f.Add("<!--/n1--><!--n1--><!-- notes:a v1\n[n9]\n-->", 1, 1)
+	f.Add("é🔥<!--n", 0, 1)
+	f.Fuzz(func(t *testing.T, s string, a, b int) {
+		if !utf8.ValidString(s) {
+			return
+		}
+		d := ParseNotes(s)
+		if utf8.RuneCountInString(d.Masked) != utf8.RuneCountInString(s) {
+			t.Fatalf("masque %q", s)
+		}
+		_ = NotesToFootnotes(s)
+		clean := StripNotes(s)
+		if out, _, err := AddNote(s, a, b, "", "note"); err == nil {
+			if got := StripNotes(out); strings.TrimRight(got, " \t\r\n") != strings.TrimRight(clean, " \t\r\n") {
+				t.Fatalf("ajout a changé le texte : %q -> %q", clean, got)
 			}
 		}
 	})

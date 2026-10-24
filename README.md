@@ -1,10 +1,10 @@
 # NYX-MD
 
-Module partagé de variables et de recherche booléenne pour les éditeurs de texte et les applications de capture.
+Module partagé de variables, de recherche booléenne et de notes pour les éditeurs de texte et les applications de capture.
 
-## État réel (0.2.0)
+## État réel (0.3.0)
 
-- Moteur Go implémenté et testé : recherche booléenne (grammaire NyxBoolean) et variables (`nyxmd/`).
+- Moteur Go implémenté et testé : recherche booléenne (grammaire NyxBoolean), variables et couche de notes (`nyxmd/`).
 - Adaptateurs : interface C (`cabi/`, `include/nyxmd.h`), paquet Swift `NyxMD` (bibliothèque universelle macOS 13+ dans `artifacts/`).
 - Consommateurs : SimpleEdit Bold v2.0 (MDMistress, master) sur 0.2.0. Migrés sur branches à relire : Nyx `m5/nyx-boolean-nyxmd`, PromptMistress `feat/nyx-md`, NoteMistress `feat/nyx-md-variables`.
 - Documentation : [docs/API.md](docs/API.md), [docs/CONTRACT.md](docs/CONTRACT.md), [docs/SIZE.md](docs/SIZE.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md). Licence MIT.

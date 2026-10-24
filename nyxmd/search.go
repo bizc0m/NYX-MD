@@ -3,7 +3,8 @@
 // La grammaire de recherche reprend NyxBoolean (Nyx, révision 4473c1e) sans changer
 // ses règles : mots entiers, opérateurs en majuscules, jokers, NEAR/n, métadonnées
 // #tag et @entité explicites. Ajouts NYX-MD : erreurs structurées avec position,
-// limite de profondeur, motifs précompilés, requête vide = tous les documents (Compile).
+// limite de profondeur, motifs précompilés, requête vide = tous les documents (Compile),
+// champs note: et couleur: (0.3, couche de notes ; voir notes.go).
 package nyxmd
 
 import (
@@ -24,9 +25,12 @@ type Document struct {
 	Text     string   `json:"text"`
 	Tags     []string `json:"tags,omitempty"`
 	Entities []string `json:"entities,omitempty"`
+	// Notes et Colors : textes et couleurs de la couche de notes (note:, couleur:). Voir NotedDocument.
+	Notes  []string `json:"notes,omitempty"`
+	Colors []string `json:"colors,omitempty"`
 }
 
-// Node est l'AST portable. Op vaut term, phrase, tag, entity, AND, OR, NOT ou NEAR.
+// Node est l'AST portable. Op vaut term, phrase, tag, entity, note, color, AND, OR, NOT ou NEAR.
 type Node struct {
 	Op, Value   string
 	Distance    int
@@ -124,6 +128,9 @@ func lex(s string) ([]token, error) {
 				kind = "entity"
 			}
 			i++
+		} else if k, n := fieldPrefix(r[i:]); n > 0 {
+			kind = k
+			i += n
 		}
 		value := ""
 		quoted := i < len(r) && r[i] == '"'
@@ -204,7 +211,7 @@ func (p *parser) expr(min int) (*Node, error) {
 			prec = 2
 		case "NEAR":
 			prec = 3
-		case "term", "phrase", "tag", "entity", "(", "NOT", "-":
+		case "term", "phrase", "tag", "entity", "note", "color", "(", "NOT", "-":
 			op = "AND"
 			prec = 2
 			implicit = true
@@ -268,7 +275,7 @@ func (p *parser) unary() (*Node, error) {
 		}
 		p.pos++
 		return n, nil
-	case "term", "phrase", "tag", "entity":
+	case "term", "phrase", "tag", "entity", "note", "color":
 		p.pos++
 		return &Node{Op: t.kind, Value: t.value}, nil
 	case "EOF":
@@ -276,6 +283,17 @@ func (p *parser) unary() (*Node, error) {
 	default:
 		return nil, qerr(ErrExpectedOperand, t.pos, "terme attendu avant « "+t.value+" »")
 	}
+}
+
+// fieldPrefix reconnaît note: et couleur: (alias color:) en minuscules ; renvoie le type et la longueur.
+func fieldPrefix(r []rune) (string, int) {
+	for _, f := range [...]struct{ name, kind string }{{"note:", "note"}, {"couleur:", "color"}, {"color:", "color"}} {
+		n := len([]rune(f.name))
+		if len(r) >= n && string(r[:n]) == f.name {
+			return f.kind, n
+		}
+	}
+	return "", 0
 }
 
 func positional(n *Node) bool {

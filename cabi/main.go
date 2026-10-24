@@ -20,7 +20,8 @@ import (
 )
 
 // ABIVersion augmente quand une opération change ou apparaît. 2 : poignées, search.find, options.
-const ABIVersion = 2
+// 3 : couche de notes (notes.*), champs notes/colors des documents (note:, couleur:).
+const ABIVersion = 3
 
 // Requêtes compilées conservées entre les appels (compilées une fois, évaluées sur de nombreux lots).
 const maxHandles = 1024
@@ -43,6 +44,11 @@ type request struct {
 	URL       string           `json:"url"`
 	Handle    int64            `json:"handle"`
 	Options   nyxmd.Options    `json:"options"`
+	Start     int              `json:"start"`
+	End       int              `json:"end"`
+	Color     string           `json:"color"`
+	Body      string           `json:"body"`
+	ID        string           `json:"id"`
 }
 
 type apiError struct {
@@ -154,6 +160,34 @@ func handle(raw []byte) (resp map[string]any) {
 			vars = []nyxmd.Variable{}
 		}
 		return map[string]any{"ok": true, "variables": vars, "diagnostics": nonNil(diags)}
+	case "notes.parse":
+		d := nyxmd.ParseNotes(req.Text)
+		return map[string]any{"ok": true, "notes": d.Notes, "markers": d.Markers, "block": d.Block,
+			"extra": nonNilStrings(d.Extra), "diagnostics": nonNil(d.Diagnostics), "masked": d.Masked}
+	case "notes.strip":
+		return map[string]any{"ok": true, "output": nyxmd.StripNotes(req.Text)}
+	case "notes.footnotes":
+		return map[string]any{"ok": true, "output": nyxmd.NotesToFootnotes(req.Text)}
+	case "notes.add":
+		out, id, err := nyxmd.AddNote(req.Text, req.Start, req.End, req.Color, req.Body)
+		if err != nil {
+			return noteFail(err)
+		}
+		return map[string]any{"ok": true, "output": out, "id": id}
+	case "notes.update":
+		out, err := nyxmd.UpdateNote(req.Text, req.ID, req.Color, req.Body)
+		if err != nil {
+			return noteFail(err)
+		}
+		return map[string]any{"ok": true, "output": out}
+	case "notes.delete":
+		out, err := nyxmd.DeleteNote(req.Text, req.ID)
+		if err != nil {
+			return noteFail(err)
+		}
+		return map[string]any{"ok": true, "output": out}
+	case "notes.colors":
+		return map[string]any{"ok": true, "colors": nyxmd.NoteColors, "default": nyxmd.DefaultNoteColor}
 	case "markdown.link":
 		return map[string]any{"ok": true, "output": nyxmd.MarkdownLink(req.Label, req.URL)}
 	default:
@@ -168,6 +202,13 @@ func compileQuery(req request) (*nyxmd.Query, map[string]any) {
 		return nil, map[string]any{"ok": false, "error": apiError{Code: qe.Code, Message: qe.Message, Position: qe.Position}}
 	}
 	return q, nil
+}
+
+func noteFail(err error) map[string]any {
+	if ne, ok := err.(*nyxmd.NoteError); ok {
+		return fail(ne.Code, ne.Message)
+	}
+	return fail("internal_error", err.Error())
 }
 
 func nonNilStrings(s []string) []string {

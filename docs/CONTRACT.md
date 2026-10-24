@@ -1,7 +1,8 @@
 # Contrat de conformité NYX-MD
 
 Les fichiers `testdata/search.json` et `testdata/variables.json` sont le **contrat** du moteur.
-Champ `contract` : version du contrat (actuellement **2**).
+Champ `contract` : version du contrat (actuellement **2**). La couche de notes a son propre fichier,
+`testdata/notes.json` (contrat notes **1**, NYX-MD 0.3) : lecture, masque, exports, modifications, erreurs, `note:` / `couleur:`.
 
 - Tout adaptateur (Go natif, Swift, WASM/JS, futur port) doit rejouer **tous** les vecteurs et obtenir exactement
   les mêmes résultats : correspondances, codes et positions d'erreur, plages trouvées, rendu des variables, diagnostics, complétion.

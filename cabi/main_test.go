@@ -18,7 +18,7 @@ func call(t *testing.T, req string) map[string]any {
 }
 
 func TestABI(t *testing.T) {
-	if r := call(t, `{"op":"version"}`); r["version"] != "0.2.0" {
+	if r := call(t, `{"op":"version"}`); r["version"] != "0.3.0" || r["abi"].(float64) != 3 {
 		t.Fatalf("version %v", r)
 	}
 	r := call(t, `{"op":"search.match","query":"(client OR fournisseur) AND NOT archivé","documents":[{"text":"client"},{"text":"fournisseur archivé"}]}`)
@@ -63,7 +63,7 @@ func TestHandles(t *testing.T) {
 	if r = call(t, fmt.Sprintf(`{"op":"search.match","handle":%v,"documents":[]}`, h)); r["error"].(map[string]any)["code"] != "unknown_handle" {
 		t.Fatalf("released %v", r)
 	}
-	if r = call(t, `{"op":"version"}`); r["abi"].(float64) != 2 {
+	if r = call(t, `{"op":"version"}`); r["abi"].(float64) != 3 {
 		t.Fatalf("abi %v", r)
 	}
 }
@@ -86,4 +86,32 @@ func TestHandleLimit(t *testing.T) {
 		opened = append(opened, r["handle"].(float64))
 	}
 	t.Fatal("no limit")
+}
+
+func TestNotesABI(t *testing.T) {
+	r := call(t, `{"op":"notes.add","text":"Café crème.","start":0,"end":4,"color":"rose","body":"chaud"}`)
+	out, _ := r["output"].(string)
+	if r["ok"] != true || r["id"] != "n1" || out != "<!--n1-->Café<!--/n1--> crème.\n\n<!-- notes v1\n[n1] (rose) chaud\n-->\n" {
+		t.Fatalf("add %v", r)
+	}
+	b, _ := json.Marshal(map[string]any{"op": "notes.parse", "text": out})
+	r = call(t, string(b))
+	notes := r["notes"].([]any)
+	if len(notes) != 1 || notes[0].(map[string]any)["start"].(float64) != 9 || r["masked"] == nil {
+		t.Fatalf("parse %v", r)
+	}
+	b, _ = json.Marshal(map[string]any{"op": "notes.footnotes", "text": out})
+	if r = call(t, string(b)); r["output"] != "Café[^1] crème.\n\n[^1]: chaud\n" {
+		t.Fatalf("footnotes %v", r)
+	}
+	if r = call(t, `{"op":"notes.add","text":"abc","start":0,"end":1,"color":"fuchsia"}`); r["error"].(map[string]any)["code"] != "unknown_color" {
+		t.Fatalf("color %v", r)
+	}
+	r = call(t, `{"op":"search.match","query":"note:chaud AND couleur:rose","documents":[{"text":"x","notes":["chaud"],"colors":["rose"]},{"text":"chaud"}]}`)
+	if m := r["matches"].([]any); m[0] != true || m[1] != false {
+		t.Fatalf("search %v", r)
+	}
+	if r = call(t, `{"op":"notes.colors"}`); len(r["colors"].([]any)) != 8 || r["default"] != "jaune" {
+		t.Fatalf("colors %v", r)
+	}
 }

@@ -10,6 +10,8 @@
 Bibliothèque statique arm64 : 2,8 Mo ; universelle : 5,2 Mo. Effet dans une app : +2,5 à 2,9 Mo
 (SimpleEdit Bold 3,1 Mo, NoteMistress 6,3 → 8,8 Mo), WASM PromptMistress 3,4 Mo.
 
+0.3.0 : couche de notes lue sans regexp, universelle 5,41 → 5,57 Mo (+150 Ko ; avec regexp : +850 Ko).
+
 Gains déjà obtenus en 0.2.0 : regexp et fmt retirés du moteur (bibliothèque 5,8 → 5,2 Mo ; WASM 3,9 → 3,4 Mo).
 
 Pistes évaluées, non retenues pour l'instant :

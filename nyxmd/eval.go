@@ -64,7 +64,7 @@ func (q *Query) Match(d Document) bool {
 
 // Find évalue la requête et renvoie, si elle correspond, les plages de texte trouvées
 // par les termes, expressions et NEAR non niés (triées, sans chevauchement).
-// Les métadonnées (#tag, @entité) ne produisent pas de plage.
+// Les métadonnées (#tag, @entité, note:, couleur:) ne produisent pas de plage.
 func (q *Query) Find(d Document) (bool, []Span) {
 	if !q.Match(d) || q.root == nil {
 		return q != nil && q.root == nil, nil
@@ -146,9 +146,19 @@ func compile(n *Node, opts Options) {
 	}
 	n.fold = opts.FoldAccents
 	switch n.Op {
-	case "term", "tag", "entity":
+	case "term", "tag", "entity", "color":
 		n.pattern = []rune(normalize(n.Value, opts.FoldAccents))
 		n.wildcard = strings.ContainsAny(n.Value, "*?")
+	case "note":
+		// Un mot (jokers permis) ou une expression entre guillemets.
+		n.pattern = []rune(normalize(n.Value, opts.FoldAccents))
+		n.wildcard = strings.ContainsAny(n.Value, "*?")
+		n.phrase = nil
+		if ws := tokenize(n.Value, opts.FoldAccents); len(ws) > 1 {
+			for _, w := range ws {
+				n.phrase = append(n.phrase, w.text)
+			}
+		}
 	case "phrase":
 		n.phrase = nil
 		for _, w := range tokenize(n.Value, opts.FoldAccents) {
@@ -175,10 +185,20 @@ func (n *Node) Match(d Document) bool {
 			return eval(n.Left) || eval(n.Right)
 		case "NOT":
 			return !eval(n.Left)
-		case "tag", "entity":
+		case "note":
+			for _, t := range d.Notes {
+				if n.matchNote(tokenize(t, n.fold)) {
+					return true
+				}
+			}
+			return false
+		case "tag", "entity", "color":
 			values := d.Tags
-			if n.Op == "entity" {
+			switch n.Op {
+			case "entity":
 				values = d.Entities
+			case "color":
+				values = d.Colors
 			}
 			for _, v := range values {
 				if n.matchValue(normalize(v, n.fold)) {
@@ -291,6 +311,22 @@ func globMatch(p, s []rune) bool {
 		pi++
 	}
 	return pi == len(p)
+}
+
+// matchNote : mot ou expression dans le texte d'une note.
+func (n *Node) matchNote(ws []word) bool {
+	if n.pattern == nil {
+		compile(n, Options{})
+	}
+	if len(n.phrase) > 1 {
+		return (&Node{Op: "phrase", phrase: n.phrase}).found(ws)
+	}
+	for _, w := range ws {
+		if n.matchValue(w.text) {
+			return true
+		}
+	}
+	return false
 }
 
 // found : comme spans, mais s'arrête au premier résultat (termes et expressions).

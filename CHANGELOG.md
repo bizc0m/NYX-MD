@@ -2,6 +2,23 @@
 
 Format SemVer. Toute modification du comportement est listée ici avant publication.
 
+## 0.3.0 — 2026-10-24
+
+Interface C : version 3 (ajouts uniquement ; les opérations 0.2.0 sont inchangées, mais l'adaptateur Swift exige l'interface 3).
+
+- **Couche de notes** (`nyxmd/notes.go`) : passages annotés `<!--n1-->…<!--/n1-->` (ou repère seul = note ponctuelle),
+  bloc `<!-- notes v1 … -->` en fin de fichier (`notes:<app> v1` accepté en lecture), lignes `[n1] (couleur) texte` échappées
+  (`\n`, `\\`, `--\>`). 8 couleurs : jaune (défaut), vert, bleu, rose, rouge, violet, orange, gris.
+  - Lecture : `ParseNotes` (notes, repères, bloc, diagnostics, texte masqué). Notes orphelines et lignes illisibles conservées.
+  - Exports : `StripNotes` (texte seul), `NotesToFootnotes` (notes de bas de page Markdown standard `[^k]`).
+  - Modifications : `AddNote`, `UpdateNote`, `DeleteNote` (erreurs `out_of_range`, `inside_marker`, `unknown_color`, `unknown_note`).
+  - Interface C : `notes.parse`, `notes.strip`, `notes.footnotes`, `notes.add`, `notes.update`, `notes.delete`, `notes.colors`. Swift : `NyxNotes`.
+- **Recherche** : champs `note:mot`, `note:"expression"` (jokers permis) et `couleur:nom` (alias `color:`) ; `Document.Notes` / `Document.Colors` ;
+  `NotedDocument` / `NyxNotes.searchDocument` masquent repères et bloc (positions et lignes inchangées) pour que `n1` ou `notes` ne soient pas pris pour des mots.
+  Règles NyxBoolean inchangées : les vecteurs de recherche du contrat 2 passent à l'identique.
+- **Contrat** : `testdata/notes.json` (contrat notes 1), rejoué en Go et en Swift ; fuzzing `FuzzNotes`.
+- **Poids** : lecture des notes écrite sans regexp ; bibliothèque universelle 5,41 → 5,57 Mo.
+
 ## 0.2.0 — 2026-10-24
 
 Interface C : version 2 (ajouts uniquement, les opérations 0.1.0 restent compatibles).

@@ -1,4 +1,4 @@
-// NyxMD — API Swift du moteur partagé NYX-MD (recherche booléenne + variables).
+// NyxMD — API Swift du moteur partagé NYX-MD (recherche booléenne, variables, couche de notes).
 // Toutes les positions renvoyées par le moteur sont en scalaires Unicode ;
 // utiliser NyxText pour convertir en String.Index ou en NSRange (UTF-16).
 import CNyxMD
@@ -18,8 +18,11 @@ public struct NyxDocument: Codable, Equatable, Sendable {
     public var text: String
     public var tags: [String]
     public var entities: [String]
-    public init(text: String, tags: [String] = [], entities: [String] = []) {
-        self.text = text; self.tags = tags; self.entities = entities
+    /// Textes et couleurs de la couche de notes (requêtes note: et couleur:). Voir NyxNotes.searchDocument.
+    public var notes: [String]
+    public var colors: [String]
+    public init(text: String, tags: [String] = [], entities: [String] = [], notes: [String] = [], colors: [String] = []) {
+        self.text = text; self.tags = tags; self.entities = entities; self.notes = notes; self.colors = colors
     }
 }
 
@@ -105,7 +108,7 @@ enum Engine {
     }
 
     /// Version d'interface attendue par cet adaptateur (voir cabi/main.go ABIVersion).
-    static let expectedABI = 2
+    static let expectedABI = 3
 
     /// Vérifiée une seule fois : une bibliothèque CNyxMD d'une autre version donne une erreur claire.
     static let abiCheck: NyxError? = {
@@ -219,11 +222,11 @@ public final class NyxQuery {
 }
 
 extension NyxDocument {
-    var json: [String: Any] { ["text": text, "tags": tags, "entities": entities] }
+    var json: [String: Any] { ["text": text, "tags": tags, "entities": entities, "notes": notes, "colors": colors] }
 }
 
 /// Grammaire NyxBoolean : mots entiers, AND/OR/NOT en majuscules, -terme, "expression",
-/// ( ), jokers * ?, NEAR/n, #tag et @entité. Requête vide = tous les documents.
+/// ( ), jokers * ?, NEAR/n, #tag et @entité, note:mot, couleur:nom. Requête vide = tous les documents.
 public enum NyxSearch {
     private struct Validation: Decodable { let terms: [String]? }
 
@@ -241,6 +244,88 @@ public enum NyxSearch {
     /// Raccourci : compile et évalue en un appel. Pour plusieurs lots, préférer NyxQuery.
     public static func match(_ query: String, documents: [NyxDocument], options: NyxSearchOptions = .init()) throws -> [Bool] {
         try NyxQuery(query, options: options).match(documents)
+    }
+}
+
+// MARK: - Couche de notes
+
+/// Note du bloc de fin de fichier. `start`/`end` : passage annoté (scalaires Unicode, entre les repères),
+/// égaux pour une note ponctuelle, -1 si la note est orpheline (aucun repère dans le texte).
+public struct NyxNote: Decodable, Equatable, Sendable {
+    public let id: String
+    public let color: String
+    public let text: String
+    public let start: Int
+    public let end: Int
+    public let orphan: Bool
+}
+
+/// Repère <!--nX--> ou <!--/nX--> (plage du commentaire, scalaires Unicode).
+public struct NyxNoteMarker: Decodable, Equatable, Sendable {
+    public let id: String
+    public let closing: Bool
+    public let start: Int
+    public let end: Int
+}
+
+public struct NyxNotesDocument: Decodable, Equatable, Sendable {
+    public let notes: [NyxNote]
+    public let markers: [NyxNoteMarker]
+    /// Bloc de notes et lignes vides qui le précèdent (nil s'il n'y en a pas).
+    public let block: NyxFindResult.Span?
+    public let extra: [String]
+    public let diagnostics: [NyxDiagnostic]
+    /// Texte où repères et bloc sont remplacés par des espaces : même longueur, mêmes lignes.
+    public let masked: String
+}
+
+/// Passages annotés `<!--n1-->…<!--/n1-->` et bloc `<!-- notes v1 … -->` en fin de fichier.
+public enum NyxNotes {
+    private struct Output: Decodable { let output: String }
+    private struct Added: Decodable { let output: String; let id: String }
+    private struct Colors: Decodable { let colors: [String]; let `default`: String }
+
+    public static func parse(_ text: String) throws -> NyxNotesDocument {
+        try Engine.call(["op": "notes.parse", "text": text], as: NyxNotesDocument.self)
+    }
+
+    /// Export « propre » : repères et bloc retirés.
+    public static func strip(_ text: String) throws -> String {
+        try Engine.call(["op": "notes.strip", "text": text], as: Output.self).output
+    }
+
+    /// Export « avec notes » : appels [^k] après les passages, définitions [^k]: en fin de document.
+    public static func footnotes(_ text: String) throws -> String {
+        try Engine.call(["op": "notes.footnotes", "text": text], as: Output.self).output
+    }
+
+    /// Annote [start, end) (scalaires Unicode ; start == end : note ponctuelle). color vide = couleur par défaut.
+    public static func add(_ text: String, start: Int, end: Int, color: String = "", body: String) throws -> (text: String, id: String) {
+        let r = try Engine.call(["op": "notes.add", "text": text, "start": start, "end": end, "color": color, "body": body], as: Added.self)
+        return (r.output, r.id)
+    }
+
+    /// color vide = inchangée.
+    public static func update(_ text: String, id: String, color: String = "", body: String) throws -> String {
+        try Engine.call(["op": "notes.update", "text": text, "id": id, "color": color, "body": body], as: Output.self).output
+    }
+
+    /// Retire la note et ses repères ; le passage reste.
+    public static func delete(_ text: String, id: String) throws -> String {
+        try Engine.call(["op": "notes.delete", "text": text, "id": id], as: Output.self).output
+    }
+
+    /// Couleurs reconnues et couleur par défaut.
+    public static func colors() throws -> (all: [String], default: String) {
+        let c = try Engine.call(["op": "notes.colors"], as: Colors.self)
+        return (c.colors, c.default)
+    }
+
+    /// Document de recherche : texte masqué (positions inchangées), notes et couleurs pour note: / couleur:.
+    public static func searchDocument(_ text: String, tags: [String] = [], entities: [String] = []) throws -> NyxDocument {
+        let d = try parse(text)
+        return NyxDocument(text: d.masked, tags: tags, entities: entities,
+                           notes: d.notes.map(\.text), colors: d.notes.map(\.color))
     }
 }
 

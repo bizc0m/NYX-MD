@@ -13,7 +13,8 @@ final class NyxMDTests: XCTestCase {
     }
 
     func testVersion() {
-        XCTAssertEqual(NyxMD.version, "0.2.0")
+        XCTAssertEqual(NyxMD.version, "0.3.0")
+        XCTAssertNil(NyxMD.compatibilityError)
     }
 
     func testSearchVectors() throws {
@@ -85,7 +86,8 @@ final class NyxMDTests: XCTestCase {
 final class NyxMD02Tests: XCTestCase {
     func testABICompatible() {
         XCTAssertNil(NyxMD.compatibilityError)
-        XCTAssertEqual(NyxMD.version, "0.2.0")
+        XCTAssertEqual(NyxMD.version, "0.3.0")
+        XCTAssertNil(NyxMD.compatibilityError)
     }
 
     func testCompiledQueryAndFind() throws {
@@ -131,5 +133,51 @@ final class NyxMD02Tests: XCTestCase {
             XCTAssertEqual((e as? NyxError)?.code, "missing_closing_parenthesis")
             XCTAssertEqual((e as? NyxError)?.position, 6)
         }
+    }
+
+    /// Vecteurs communs de la couche de notes (testdata/notes.json), à travers le pont C.
+    func testNotesVectors() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("testdata/notes.json")
+        let v = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        XCTAssertEqual(v["contract"] as? Int, 1)
+        let docs = v["documents"] as! [String: String]
+        func text(_ c: [String: Any]) -> String { (c["doc"] as? String).map { docs[$0]! } ?? c["text"] as! String }
+        for c in v["parse"] as! [[String: Any]] {
+            let d = try NyxNotes.parse(text(c))
+            if let notes = c["notes"] as? [[String: Any]] {
+                XCTAssertEqual(d.notes.map { $0.id }, notes.map { $0["id"] as! String })
+                XCTAssertEqual(d.notes.map { $0.start }, notes.map { $0["start"] as! Int })
+                XCTAssertEqual(d.notes.map { $0.text }, notes.map { $0["text"] as! String })
+            }
+            XCTAssertEqual(d.diagnostics.map { $0.code }, c["diagnostics"] as! [String])
+            if let m = c["masked"] as? String { XCTAssertEqual(d.masked, m) }
+        }
+        for c in v["strip"] as! [[String: Any]] { XCTAssertEqual(try NyxNotes.strip(text(c)), c["output"] as! String) }
+        for c in v["footnotes"] as! [[String: Any]] { XCTAssertEqual(try NyxNotes.footnotes(text(c)), c["output"] as! String) }
+        for c in v["edits"] as! [[String: Any]] {
+            let src = text(c), op = c["op"] as! String
+            let color = c["color"] as? String ?? "", body = c["body"] as? String ?? "", id = c["id"] as? String ?? ""
+            do {
+                let out: String
+                switch op {
+                case "add":
+                    let r = try NyxNotes.add(src, start: c["start"] as! Int, end: c["end"] as! Int, color: color, body: body)
+                    XCTAssertEqual(r.id, id)
+                    out = r.text
+                case "update": out = try NyxNotes.update(src, id: id, color: color, body: body)
+                default: out = try NyxNotes.delete(src, id: id)
+                }
+                XCTAssertNil(c["error"], "\(op) aurait dû échouer")
+                XCTAssertEqual(out, c["output"] as? String)
+            } catch let e as NyxError {
+                XCTAssertEqual(e.code, c["error"] as? String, op)
+            }
+        }
+        for c in v["search"] as! [[String: Any]] {
+            let q = c["query"] as! String
+            XCTAssertEqual(try NyxSearch.match(q, documents: [try NyxNotes.searchDocument(text(c))]), [c["match"] as! Bool], q)
+        }
+        XCTAssertEqual(try NyxNotes.colors().default, "jaune")
     }
 }
