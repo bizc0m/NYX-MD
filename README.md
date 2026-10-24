@@ -2,9 +2,22 @@
 
 Module partagé de variables et de recherche booléenne pour les éditeurs de texte et les applications de capture.
 
-## État réel
+## État réel (0.1.0)
 
-Ce dépôt contient la spécification et les instructions d’implémentation. Le moteur exécutable, les adaptateurs et les mises à jour automatiques ne sont pas encore implémentés. Ne pas l’ajouter comme dépendance exécutable avant une première version testée.
+- Moteur Go implémenté et testé : recherche booléenne (grammaire NyxBoolean) et variables (`nyxmd/`).
+- Adaptateurs : interface C (`cabi/`, `include/nyxmd.h`), paquet Swift `NyxMD` (bibliothèque universelle macOS 13+ dans `artifacts/`).
+- Consommateur en cours d'intégration : SimpleEdit Bold (dépôt MDMistress). NoteMistress, Nyx et PromptMistress ne sont **pas** encore migrés.
+- Documentation : [docs/API.md](docs/API.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md).
+
+## Développement
+
+```sh
+go test ./...                      # moteur + interface C
+./scripts/build-xcframework.sh     # après toute modification de nyxmd/, cabi/ ou include/
+swift test                         # adaptateur Swift sur les mêmes vecteurs
+```
+
+Publier : mettre à jour `nyxmd/version.go` et `CHANGELOG.md`, reconstruire l'artefact, commiter, taguer `vX.Y.Z`.
 
 ## Intérêt pour un éditeur de texte
 

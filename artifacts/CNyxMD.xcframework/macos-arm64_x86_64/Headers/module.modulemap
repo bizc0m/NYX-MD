@@ -1,0 +1,4 @@
+module CNyxMD {
+    header "nyxmd.h"
+    export *
+}

@@ -1,0 +1,46 @@
+{
+  "comment": "Vecteurs de conformité des variables. Contexte commun : 2026-10-24 14:05:09 à Paris (UTC+2), samedi. Lus par les tests Go et Swift.",
+  "context": {
+    "text": "Ligne 1\nLigne 2 avec {{date}} et $client",
+    "url": "https://exemple.fr/a<b>",
+    "title": "Titre [x]",
+    "tags": "#projet #urgent",
+    "comment": "Voir $client",
+    "timestamp": 1792843509,
+    "utc_offset_seconds": 7200,
+    "locale": "fr_FR",
+    "personal": [{"name": "client", "value": "ACME $date"}, {"name": "clientName", "value": "Élodie 😀"}]
+  },
+  "render": [
+    {"template": "Le $date ($day) à $time", "output": "Le 2026-10-24 (samedi) à 14:05", "warnings": []},
+    {"template": "$datetime | $month | $year", "output": "2026-10-24 14:05 | 2026-10 | 2026", "warnings": []},
+    {"template": "{{date}} {{heure}}", "output": "2026-10-24 14:05:09", "warnings": []},
+    {"template": "Client : $client / $clientName", "output": "Client : ACME $date / Élodie 😀", "warnings": []},
+    {"template": "$clientèle $client2 $clientName_x", "output": "$clientèle $client2 $clientName_x", "warnings": ["client2", "clientName_x"]},
+    {"template": "$client.", "output": "ACME $date.", "warnings": []},
+    {"template": "{{texte}}", "output": "Ligne 1\nLigne 2 avec {{date}} et $client", "warnings": []},
+    {"template": "- [ ] {{texte}}\n  - {{source}}", "output": "- [ ] Ligne 1\nLigne 2 avec {{date}} et $client\n  - [Titre \\[x\\]](<https://exemple.fr/a%3Cb%3E>)", "warnings": []},
+    {"template": "  - {{texte}}", "output": "  - Ligne 1\n  Ligne 2 avec {{date}} et $client", "warnings": []},
+    {"template": "{{commentaire}} {{tags}}", "output": "Voir $client #projet #urgent", "warnings": []},
+    {"template": "{{inconnu}} $absent", "output": "{{inconnu}} $absent", "warnings": ["inconnu", "absent"]},
+    {"template": "$section(Notes) $LLM $Date", "output": "$section(Notes) $LLM $Date", "warnings": ["Date"]},
+    {"template": "Prix 5$ ou $5 ou $ seul", "output": "Prix 5$ ou $5 ou $ seul", "warnings": []},
+    {"template": "{{date} {{ date }} {{{date}}}", "output": "{{date} {{ date }} {2026-10-24}", "warnings": [" date "]},
+    {"template": "", "output": "", "warnings": []}
+  ],
+  "personal_text": [
+    {"text": "client=ACME, ville = Lyon", "names": ["client", "ville"], "errors": []},
+    {"text": "date=X, 2x=Y, a-b=Z, vide=, sans_egal", "names": [], "errors": ["reserved_name", "invalid_name", "invalid_name", "empty_value", "malformed_entry"]},
+    {"text": "Client=A, client=B", "names": ["Client"], "errors": ["duplicate_name"]},
+    {"text": "LLM=x, section=y\nfile=z", "names": [], "errors": ["reserved_name", "reserved_name", "reserved_name"]}
+  ],
+  "complete": [
+    {"text": "Note {{da", "caret": 9, "start": 5, "end": 9, "labels": ["{{date}}"]},
+    {"text": "Note {{}} x", "caret": 7, "start": 5, "end": 9, "labels": ["{{texte}}", "{{source}}", "{{url}}", "{{titre}}", "{{date}}", "{{heure}}", "{{tags}}", "{{commentaire}}"]},
+    {"text": "À $d", "caret": 4, "start": 2, "end": 4, "labels": ["$date", "$day", "$datetime"]},
+    {"text": "À $cl", "caret": 5, "start": 2, "end": 5, "labels": ["$client", "$clientName"]},
+    {"text": "$", "caret": 1, "start": 0, "end": 1, "labels": ["$date", "$day", "$time", "$datetime", "$month", "$year", "$client", "$clientName"]},
+    {"text": "texte simple", "caret": 5, "none": true},
+    {"text": "$2", "caret": 2, "none": true}
+  ]
+}

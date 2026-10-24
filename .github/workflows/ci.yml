@@ -1,0 +1,28 @@
+# CI NYX-MD : tests Go (Linux, peu coûteux) puis vérification de l'artefact
+# et tests Swift (macOS). Jeton en lecture seule ; aucune publication automatique.
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test ./nyxmd -run='^$' -fuzz=FuzzCompile -fuzztime=15s
+  swift:
+    needs: go
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Artefact à jour avec les sources
+        run: test "$(./scripts/source-hash.sh)" = "$(cat artifacts/SOURCE_SHA256)"
+      - run: swift test
