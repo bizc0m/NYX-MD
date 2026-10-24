@@ -1,0 +1,47 @@
+# Construit artifacts/CNyxMD.xcframework sur GitHub (jamais sur un poste) et le commite
+# sur la branche de travail, avec une attestation de provenance signée par GitHub.
+# Se déclenche sur les branches autres que main quand les sources ont changé
+# ou que l'artefact présent n'a pas été produit par cette action.
+name: Artefact
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+permissions:
+  contents: write      # commiter l'artefact sur la branche
+  id-token: write      # attestation de provenance
+  attestations: write
+concurrency: artifact-${{ github.ref }}
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.5" }
+      - id: need
+        name: Reconstruction nécessaire ?
+        run: |
+          author=$(git log -1 --format=%ae -- artifacts/)
+          if [ "$(./scripts/source-hash.sh)" != "$(cat artifacts/SOURCE_SHA256 2>/dev/null)" ] \
+             || [ "$author" != "41898282+github-actions[bot]@users.noreply.github.com" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Artefact déjà construit par la CI pour ces sources." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.need.outputs.build == 'true'
+        run: ./scripts/build-xcframework.sh
+      - if: steps.need.outputs.build == 'true'
+        run: go test ./... && swift test
+      - if: steps.need.outputs.build == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/CNyxMD.xcframework/macos-arm64_x86_64/libnyxmd.a
+      - if: steps.need.outputs.build == 'true'
+        name: Commit de l'artefact
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A artifacts
+          git commit -m "build: CNyxMD.xcframework construit par la CI ($(cat artifacts/SOURCE_SHA256 | cut -c1-12))"
+          git push

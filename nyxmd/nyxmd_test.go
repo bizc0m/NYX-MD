@@ -253,3 +253,151 @@ func FuzzRender(f *testing.F) {
 		}
 	})
 }
+
+func TestFindSpans(t *testing.T) {
+	q, _ := Compile(`(client OR "à relancer") -archivé`)
+	ok, spans := q.Find(Document{Text: "😀 client : facture à relancer, client"})
+	want := []Span{{2, 8}, {19, 29}, {31, 37}}
+	if !ok || !reflect.DeepEqual(spans, want) {
+		t.Fatalf("got %v %v", ok, spans)
+	}
+	if ok, _ := q.Find(Document{Text: "client archivé"}); ok {
+		t.Fatal("negation ignored")
+	}
+	q, _ = Compile("alpha NEAR/1 gamma")
+	_, spans = q.Find(Document{Text: "alpha beta gamma"})
+	if !reflect.DeepEqual(spans, []Span{{0, 16}}) {
+		t.Fatalf("near %v", spans)
+	}
+	q, _ = Compile("")
+	if ok, spans := q.Find(Document{Text: "x"}); !ok || spans != nil {
+		t.Fatal("empty query")
+	}
+	q, _ = Compile("#tag")
+	if ok, spans := q.Find(Document{Text: "x", Tags: []string{"tag"}}); !ok || spans != nil {
+		t.Fatal("metadata spans")
+	}
+}
+
+func TestFoldAccents(t *testing.T) {
+	d := Document{Text: "Dossier ARCHIVÉ — Œuvre de Zoë, déjà vu", Tags: []string{"Été/Projet"}}
+	strict, _ := Compile("archive")
+	fold, _ := CompileWith("archive", Options{FoldAccents: true})
+	if strict.Match(d) || !fold.Match(d) {
+		t.Fatal("fold archive")
+	}
+	for _, q := range []string{"oeuvre", "zoe", "deja", `"deja vu"`, "#ete/*", "archiv?", "ŒUVRE"} {
+		c, err := CompileWith(q, Options{FoldAccents: true})
+		if err != nil || !c.Match(d) {
+			t.Fatalf("fold %q: %v", q, err)
+		}
+	}
+	_, spans := fold.Find(d)
+	if !reflect.DeepEqual(spans, []Span{{8, 15}}) {
+		t.Fatalf("fold spans %v", spans)
+	}
+}
+
+func TestGlobMatch(t *testing.T) {
+	cases := []struct {
+		p, s string
+		ok   bool
+	}{
+		{"*", "", true}, {"a*", "a", true}, {"a*c", "abbbc", true}, {"a*c", "abbb", false},
+		{"?", "é", true}, {"??", "é", false}, {"*a*b*", "xaxxbx", true}, {"a**b", "ab", true},
+		{"local-*", "local-first", true}, {"", "", true}, {"", "a", false},
+	}
+	for _, c := range cases {
+		if globMatch([]rune(c.p), []rune(c.s)) != c.ok {
+			t.Fatalf("%q ~ %q", c.p, c.s)
+		}
+	}
+}
+
+func TestHandBuiltAST(t *testing.T) {
+	n := &Node{Op: "AND", Left: &Node{Op: "term", Value: "Nyx"}, Right: &Node{Op: "phrase", Value: "recherche locale"}}
+	if !n.Match(Document{Text: "nyx recherche locale"}) {
+		t.Fatal("hand-built AST")
+	}
+}
+
+var benchText = strings.Repeat("Relance du client Élodie : facture à relancer avant vendredi, projet ACME archivé. ", 50)
+
+func BenchmarkMatchExact(b *testing.B) {
+	q, _ := Compile(`(client OR fournisseur) AND NOT archivé AND "à relancer"`)
+	d := Document{Text: benchText}
+	for i := 0; i < b.N; i++ {
+		q.Match(d)
+	}
+}
+
+func BenchmarkMatchWildcard(b *testing.B) {
+	q, _ := Compile(`clien* AND rel?nce*`)
+	d := Document{Text: benchText}
+	for i := 0; i < b.N; i++ {
+		q.Match(d)
+	}
+}
+
+func TestContractFindAndFold(t *testing.T) {
+	var v struct {
+		Contract int `json:"contract"`
+		Find     []struct {
+			Text, Query string
+			Match       bool
+			Spans       [][2]int
+		} `json:"find"`
+		Fold []struct {
+			Text, Query    string
+			Tags           []string
+			Strict, Folded bool
+		} `json:"fold_accents"`
+	}
+	load(t, "../testdata/search.json", &v)
+	if v.Contract != 2 || len(v.Find) == 0 || len(v.Fold) == 0 {
+		t.Fatalf("contract %d", v.Contract)
+	}
+	for _, c := range v.Find {
+		q, err := Compile(c.Query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok, spans := q.Find(Document{Text: c.Text})
+		got := [][2]int{}
+		for _, s := range spans {
+			got = append(got, [2]int{s.Start, s.End})
+		}
+		if ok != c.Match || !reflect.DeepEqual(got, c.Spans) {
+			t.Fatalf("find %q: %v %v", c.Query, ok, got)
+		}
+	}
+	for _, c := range v.Fold {
+		d := Document{Text: c.Text, Tags: c.Tags}
+		s, _ := Compile(c.Query)
+		f, _ := CompileWith(c.Query, Options{FoldAccents: true})
+		if s.Match(d) != c.Strict || f.Match(d) != c.Folded {
+			t.Fatalf("fold %q", c.Query)
+		}
+	}
+}
+
+func FuzzFind(f *testing.F) {
+	for _, s := range []string{"client", `"à relancer"`, "a NEAR/1 b", "app* -x", "é?"} {
+		f.Add(s, "😀 client à relancer app éa")
+	}
+	f.Fuzz(func(t *testing.T, q, text string) {
+		for _, fold := range []bool{false, true} {
+			c, err := CompileWith(q, Options{FoldAccents: fold})
+			if err != nil {
+				continue
+			}
+			ok, spans := c.Find(Document{Text: text})
+			n := len([]rune(text))
+			for i, s := range spans {
+				if !ok || s.Start < 0 || s.End > n || s.Start >= s.End || (i > 0 && s.Start <= spans[i-1].End-1) {
+					t.Fatalf("bad spans %v for %q in %q", spans, q, text)
+				}
+			}
+		}
+	})
+}

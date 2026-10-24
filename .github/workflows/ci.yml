@@ -1,5 +1,5 @@
-# CI NYX-MD : tests Go (Linux, peu coûteux) puis vérification de l'artefact
-# et tests Swift (macOS). Jeton en lecture seule ; aucune publication automatique.
+# CI NYX-MD : tests Go (Linux), puis artefact et tests Swift (macOS).
+# Sur main et les tags, l'artefact doit avoir été construit par l'action « Artefact ».
 name: CI
 on:
   push:
@@ -14,15 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+        with: { go-version: "1.26.5" }
       - run: go vet ./...
       - run: go test ./...
-      - run: go test ./nyxmd -run='^$' -fuzz=FuzzCompile -fuzztime=15s
+      - run: |
+          for f in FuzzCompile FuzzRender FuzzFind; do go test ./nyxmd -run='^$' -fuzz=$f -fuzztime=60s; done
   swift:
     needs: go
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - name: Artefact à jour avec les sources
         run: test "$(./scripts/source-hash.sh)" = "$(cat artifacts/SOURCE_SHA256)"
+      - name: Artefact construit par la CI
+        if: github.event_name == 'push'
+        run: test "$(git log -1 --format=%ae -- artifacts/)" = "41898282+github-actions[bot]@users.noreply.github.com"
       - run: swift test

@@ -13,9 +13,9 @@ Une modification dans le dépôt ne modifie pas automatiquement une application 
 
 Ne pas installer un auto-updater qui télécharge et exécute du code distant au démarrage de l’éditeur. La mise à jour automatique doit passer par les dépendances, les tests et la procédure de livraison de chaque projet.
 
-## État (0.1.0)
+## État (0.2.0)
 
 - Versions : tags `vX.Y.Z` (Go et Swift Package Manager), CHANGELOG.md.
-- CI : `.github/workflows/ci.yml` (tests Go, vérification de l'artefact, tests Swift). Jeton en lecture seule.
-- Proposition de mises à jour : Dependabot côté consommateur (écosystème `swift`), voir le dépôt MDMistress.
+- CI : `ci.yml` (tests Go + fuzzing 3×60 s, artefact à jour et construit par la CI, tests Swift), `artifact.yml` (construction + attestation), `release.yml` (release + SHA-256).
+- Proposition de mises à jour : action planifiée côté consommateur (voir MDMistress : `update-nyx-md`), Dependabot Swift ne gérant pas ce cas.
 - Retour arrière d'un consommateur : remettre la version précédente dans son Package.swift (`exact:`), `swift package resolve`, reconstruire.

@@ -2,6 +2,23 @@
 
 Format SemVer. Toute modification du comportement est listée ici avant publication.
 
+## 0.2.0 — 2026-10-24
+
+Interface C : version 2 (ajouts uniquement, les opérations 0.1.0 restent compatibles).
+
+- **Requêtes compilées** : `search.compile` / `search.release` (poignées, 1024 max) ; Swift `NyxQuery`, Go `CompileWith`.
+- **Positions trouvées** : `Query.Find` / `search.find` / `NyxQuery.find` renvoient les plages des termes, expressions et NEAR non niés.
+- **Accents ignorés en option** (`fold_accents`, désactivé par défaut) : lettres latines (Latin-1 et Latin étendu A, œ, æ, ß).
+- **Performance** : découpage en mots sans allocation par mot, comparaison directe des mots sans joker, jokers sans regexp,
+  arrêt au premier résultat. Mesure (texte de 4 Ko) : 43 → 20,6 µs par document (×2,1), 21 → 4 allocations.
+- **Poids** : bibliothèque 5,8 → 5,2 Mo (regexp et fmt retirés du moteur).
+- **Contrôle d'interface** : l'adaptateur Swift vérifie au premier appel que la bibliothèque est en interface 2 (`abi_mismatch` sinon).
+- **Provenance** : la bibliothèque est construite par l'action GitHub « Artefact » (attestation signée) ; la CI refuse sur main un artefact non construit par la CI ; la release joint l'archive et son SHA-256.
+- **Contrat de conformité v2** (`testdata/`, champ `contract`) : vecteurs de positions et d'accents, rejoués en Go et en Swift ; fuzzing de Find.
+- Licence MIT.
+
+Règles de recherche inchangées : les 116 cas 0.1.0 passent à l'identique.
+
 ## 0.1.0 — 2026-10-24
 
 Première version du moteur.

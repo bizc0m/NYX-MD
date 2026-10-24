@@ -1,4 +1,4 @@
-# API NYX-MD 0.1.0
+# API NYX-MD 0.2.0
 
 Un moteur Go unique (`nyxmd/`), exposé par :
 
@@ -30,8 +30,13 @@ En Swift, `NyxText.nsRange(start:end:in:)` et `NyxText.scalarOffset(utf16:in:)` 
 - `Compile("")` (ou blancs) : tous les documents. `Parse("")` reste une erreur (contrat NyxBoolean).
 - Limites : 4096 octets, 64 niveaux d'imbrication (parenthèses, NOT, opérateurs), NEAR ≤ 4096.
 
-Go : `Compile(query) (*Query, error)`, `(*Query).Match(Document) bool`, `(*Query).Terms() []string`, `Parse(query) (*Node, error)`.
-Swift : `NyxSearch.validate(_:) -> Result<[String], NyxError>`, `NyxSearch.match(_:documents:) throws -> [Bool]`.
+- Option `fold_accents` (désactivée par défaut) : accents des lettres latines ignorés, dans la requête et les documents.
+- `Find` renvoie les plages [début, fin) des termes, expressions et NEAR non niés, triées et fusionnées ; les métadonnées n'en produisent pas.
+
+Go : `Compile(query)`, `CompileWith(query, Options)`, `(*Query).Match(Document) bool`, `(*Query).Find(Document) (bool, []Span)`,
+`(*Query).Terms() []string`, `Parse(query) (*Node, error)`. Une `Query` est immuable et partageable entre goroutines.
+Swift : `NyxQuery(_:options:)` (compilée une fois, `match`, `find`, `terms`, libérée à la destruction),
+`NyxSearch.validate(_:options:)`, `NyxSearch.match(_:documents:options:)` (raccourci).
 
 ### Erreurs de requête (`QueryError` / `NyxError`)
 
@@ -77,7 +82,9 @@ Swift : `NyxVariables.render/validate/references/complete/parsePersonal/markdown
 ## Interface C (`nyxmd_call`)
 
 Requête JSON → réponse JSON `{"ok": true, …}` ou `{"ok": false, "error": {"code", "message", "position"}}`.
-Libérer chaque réponse avec `nyxmd_free`. Opérations : `version`, `search.validate`, `search.match`,
-`variables.render`, `variables.validate`, `variables.references`, `variables.complete`,
-`variables.parse_personal`, `markdown.link`. Erreurs d'appel : `bad_request`, `unknown_op`, `internal_error`
+Libérer chaque réponse avec `nyxmd_free`. Version d'interface (`abi`) : **2**. Opérations : `version`,
+`search.compile` (→ `handle`), `search.release`, `search.validate`, `search.match`, `search.find`
+(ces trois dernières acceptent `handle` ou `query` + `options`), `variables.render`, `variables.validate`, `variables.references`, `variables.complete`,
+`variables.parse_personal`, `markdown.link`. Erreurs d'appel : `bad_request`, `unknown_op`, `unknown_handle`, `too_many_handles`, `internal_error`
+(Swift ajoute `abi_mismatch` si la bibliothèque ne correspond pas à l'adaptateur)
 (une panique Go est convertie en erreur, jamais propagée).

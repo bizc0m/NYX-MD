@@ -2,22 +2,26 @@
 
 Module partagé de variables et de recherche booléenne pour les éditeurs de texte et les applications de capture.
 
-## État réel (0.1.0)
+## État réel (0.2.0)
 
 - Moteur Go implémenté et testé : recherche booléenne (grammaire NyxBoolean) et variables (`nyxmd/`).
 - Adaptateurs : interface C (`cabi/`, `include/nyxmd.h`), paquet Swift `NyxMD` (bibliothèque universelle macOS 13+ dans `artifacts/`).
 - Consommateur intégré et testé : SimpleEdit Bold v1.6 (dépôt MDMistress, commit 0cdb5d8), NyxMD exact 0.1.0. NoteMistress, Nyx et PromptMistress ne sont **pas** encore migrés.
-- Documentation : [docs/API.md](docs/API.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md).
+- Documentation : [docs/API.md](docs/API.md), [docs/CONTRACT.md](docs/CONTRACT.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md). Licence MIT.
 
 ## Développement
 
 ```sh
 go test ./...                      # moteur + interface C
-./scripts/build-xcframework.sh     # après toute modification de nyxmd/, cabi/ ou include/
+./scripts/build-xcframework.sh     # essai local seulement : ne pas commiter cet artefact
 swift test                         # adaptateur Swift sur les mêmes vecteurs
 ```
 
-Publier : mettre à jour `nyxmd/version.go` et `CHANGELOG.md`, reconstruire l'artefact, commiter, taguer `vX.Y.Z`.
+Publier une version :
+1. Sur une branche : modifier le code, `nyxmd/version.go` et `CHANGELOG.md`, pousser.
+2. L'action **Artefact** reconstruit `artifacts/CNyxMD.xcframework` sur GitHub, l'atteste et le commite sur la branche.
+3. Fusionner dans `main` (la CI refuse un artefact non construit par la CI), taguer `vX.Y.Z` et pousser le tag.
+4. L'action **Release** crée la release avec les notes, l'archive et `SHA256SUMS.txt`.
 
 ## Intérêt pour un éditeur de texte
 

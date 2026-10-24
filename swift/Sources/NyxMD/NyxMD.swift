@@ -104,7 +104,29 @@ enum Engine {
         init?(intValue: Int) { nil }
     }
 
-    static func call<T: Decodable>(_ request: [String: Any], as: T.Type) throws -> T {
+    /// Version d'interface attendue par cet adaptateur (voir cabi/main.go ABIVersion).
+    static let expectedABI = 2
+
+    /// Vérifiée une seule fois : une bibliothèque CNyxMD d'une autre version donne une erreur claire.
+    static let abiCheck: NyxError? = {
+        struct V: Decodable { let abi: Int; let version: String }
+        guard let v = try? rawCall(["op": "version"], as: V.self) else {
+            return NyxError(code: "abi_mismatch", message: "bibliothèque NYX-MD illisible", position: -1)
+        }
+        guard v.abi == expectedABI else {
+            return NyxError(code: "abi_mismatch",
+                            message: "bibliothèque NYX-MD \(v.version) (interface \(v.abi)) incompatible avec l'adaptateur (interface \(expectedABI))",
+                            position: -1)
+        }
+        return nil
+    }()
+
+    static func call<T: Decodable>(_ request: [String: Any], as type: T.Type) throws -> T {
+        if let e = abiCheck { throw e }
+        return try rawCall(request, as: type)
+    }
+
+    static func rawCall<T: Decodable>(_ request: [String: Any], as: T.Type) throws -> T {
         let data = try JSONSerialization.data(withJSONObject: request)
         let json = String(decoding: data, as: UTF8.self)
         guard let raw = json.withCString({ nyxmd_call($0) }) else {
@@ -138,22 +160,77 @@ public enum NyxMD {
     /// Version du moteur lié (SemVer).
     public static var version: String {
         struct V: Decodable { let version: String }
-        return (try? Engine.call(["op": "version"], as: V.self).version) ?? "inconnue"
+        return (try? Engine.rawCall(["op": "version"], as: V.self).version) ?? "inconnue"
     }
+
+    /// nil si la bibliothèque liée correspond à l'adaptateur, sinon l'erreur abi_mismatch.
+    public static var compatibilityError: NyxError? { Engine.abiCheck }
 }
 
 // MARK: - Recherche booléenne
+
+/// Options de recherche.
+public struct NyxSearchOptions: Equatable, Sendable {
+    /// Ignore les accents des lettres latines (archive = archivé). Désactivé par défaut.
+    public var foldAccents: Bool
+    public init(foldAccents: Bool = false) { self.foldAccents = foldAccents }
+    var json: [String: Any] { ["fold_accents": foldAccents] }
+}
+
+/// Résultat de recherche d'un document : correspondance et plages trouvées (scalaires Unicode).
+public struct NyxFindResult: Decodable, Equatable, Sendable {
+    public struct Span: Decodable, Equatable, Sendable {
+        public let start: Int
+        public let end: Int
+    }
+    public let match: Bool
+    public let spans: [Span]
+}
+
+/// Requête compilée une seule fois puis évaluée sur autant de documents que voulu.
+/// Libérée automatiquement à la destruction de l'objet.
+public final class NyxQuery {
+    private let handle: Int64
+    /// Termes et expressions non niés de la requête.
+    public let terms: [String]
+
+    private struct Compiled: Decodable { let handle: Int64; let terms: [String] }
+    private struct Matches: Decodable { let matches: [Bool] }
+    private struct Found: Decodable { let results: [NyxFindResult] }
+
+    /// Lance NyxError (code, message, position) si la requête est invalide.
+    public init(_ query: String, options: NyxSearchOptions = .init()) throws {
+        let c = try Engine.call(["op": "search.compile", "query": query, "options": options.json], as: Compiled.self)
+        handle = c.handle
+        terms = c.terms
+    }
+
+    deinit { _ = try? Engine.rawCall(["op": "search.release", "handle": handle], as: Empty.self) }
+
+    public func match(_ documents: [NyxDocument]) throws -> [Bool] {
+        try Engine.call(["op": "search.match", "handle": handle, "documents": documents.map(\.json)], as: Matches.self).matches
+    }
+
+    public func find(_ documents: [NyxDocument]) throws -> [NyxFindResult] {
+        try Engine.call(["op": "search.find", "handle": handle, "documents": documents.map(\.json)], as: Found.self).results
+    }
+
+    private struct Empty: Decodable {}
+}
+
+extension NyxDocument {
+    var json: [String: Any] { ["text": text, "tags": tags, "entities": entities] }
+}
 
 /// Grammaire NyxBoolean : mots entiers, AND/OR/NOT en majuscules, -terme, "expression",
 /// ( ), jokers * ?, NEAR/n, #tag et @entité. Requête vide = tous les documents.
 public enum NyxSearch {
     private struct Validation: Decodable { let terms: [String]? }
-    private struct Matches: Decodable { let matches: [Bool] }
 
     /// Vérifie la requête ; renvoie les termes positifs (pour surligner) ou l'erreur.
-    public static func validate(_ query: String) -> Result<[String], NyxError> {
+    public static func validate(_ query: String, options: NyxSearchOptions = .init()) -> Result<[String], NyxError> {
         do {
-            return .success(try Engine.call(["op": "search.validate", "query": query], as: Validation.self).terms ?? [])
+            return .success(try Engine.call(["op": "search.validate", "query": query, "options": options.json], as: Validation.self).terms ?? [])
         } catch let e as NyxError {
             return .failure(e)
         } catch {
@@ -161,10 +238,9 @@ public enum NyxSearch {
         }
     }
 
-    /// Évalue la requête sur chaque document (une compilation par appel).
-    public static func match(_ query: String, documents: [NyxDocument]) throws -> [Bool] {
-        let docs = documents.map { ["text": $0.text, "tags": $0.tags, "entities": $0.entities] as [String: Any] }
-        return try Engine.call(["op": "search.match", "query": query, "documents": docs], as: Matches.self).matches
+    /// Raccourci : compile et évalue en un appel. Pour plusieurs lots, préférer NyxQuery.
+    public static func match(_ query: String, documents: [NyxDocument], options: NyxSearchOptions = .init()) throws -> [Bool] {
+        try NyxQuery(query, options: options).match(documents)
     }
 }
 

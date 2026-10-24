@@ -13,7 +13,7 @@ final class NyxMDTests: XCTestCase {
     }
 
     func testVersion() {
-        XCTAssertEqual(NyxMD.version, "0.1.0")
+        XCTAssertEqual(NyxMD.version, "0.2.0")
     }
 
     func testSearchVectors() throws {
@@ -79,5 +79,57 @@ final class NyxMDTests: XCTestCase {
         var ctx = NyxContext()
         ctx.personal = [NyxVariable(name: "client", value: "ACME")]
         XCTAssertEqual(try NyxVariables.render("Client $client, pas $clientèle", context: ctx).output, "Client ACME, pas $clientèle")
+    }
+}
+
+final class NyxMD02Tests: XCTestCase {
+    func testABICompatible() {
+        XCTAssertNil(NyxMD.compatibilityError)
+        XCTAssertEqual(NyxMD.version, "0.2.0")
+    }
+
+    func testCompiledQueryAndFind() throws {
+        let q = try NyxQuery("(client OR \"à relancer\") -archivé")
+        XCTAssertEqual(q.terms, ["client", "à relancer"])
+        let docs = [NyxDocument(text: "😀 client : facture à relancer"), NyxDocument(text: "client archivé")]
+        XCTAssertEqual(try q.match(docs), [true, false])
+        let r = try q.find(docs)
+        XCTAssertEqual(r[0].spans.map { [$0.start, $0.end] }, [[2, 8], [19, 29]])
+        let text = docs[0].text
+        let ns = NyxText.nsRange(start: r[0].spans[0].start, end: r[0].spans[0].end, in: text)
+        XCTAssertEqual((text as NSString).substring(with: ns), "client")
+        XCTAssertFalse(r[1].match)
+        // Plusieurs lots avec la même requête compilée.
+        for _ in 0..<50 { XCTAssertEqual(try q.match([NyxDocument(text: "client")]), [true]) }
+    }
+
+    func testFoldAccentsOption() throws {
+        let doc = [NyxDocument(text: "Dossier archivé, Œuvre")]
+        XCTAssertEqual(try NyxSearch.match("archive", documents: doc), [false])
+        XCTAssertEqual(try NyxSearch.match("archive oeuvre", documents: doc, options: .init(foldAccents: true)), [true])
+    }
+
+    func testContractFindAndFold() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("testdata/search.json")
+        let v = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        XCTAssertEqual(v["contract"] as? Int, 2)
+        for c in v["find"] as! [[String: Any]] {
+            let r = try NyxQuery(c["query"] as! String).find([NyxDocument(text: c["text"] as! String)])[0]
+            XCTAssertEqual(r.match, c["match"] as! Bool)
+            XCTAssertEqual(r.spans.map { [$0.start, $0.end] }, c["spans"] as! [[Int]])
+        }
+        for c in v["fold_accents"] as! [[String: Any]] {
+            let d = [NyxDocument(text: c["text"] as! String, tags: c["tags"] as! [String])]
+            XCTAssertEqual(try NyxSearch.match(c["query"] as! String, documents: d), [c["strict"] as! Bool])
+            XCTAssertEqual(try NyxSearch.match(c["query"] as! String, documents: d, options: .init(foldAccents: true)), [c["folded"] as! Bool])
+        }
+    }
+
+    func testInvalidQueryThrowsWithPosition() {
+        XCTAssertThrowsError(try NyxQuery("x AND (client")) { e in
+            XCTAssertEqual((e as? NyxError)?.code, "missing_closing_parenthesis")
+            XCTAssertEqual((e as? NyxError)?.position, 6)
+        }
     }
 }

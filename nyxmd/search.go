@@ -7,7 +7,6 @@
 package nyxmd
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -32,8 +31,10 @@ type Node struct {
 	Op, Value   string
 	Distance    int
 	Left, Right *Node
-	matcher     *regexp.Regexp // joker précompilé (term, tag, entity)
-	phrase      []string       // mots d'une expression exacte
+	pattern     []rune   // valeur normalisée (minuscules, accents selon Options) pour term, tag, entity
+	wildcard    bool     // pattern contient * ou ?
+	phrase      []string // mots normalisés d'une expression exacte
+	fold        bool     // accents ignorés à la compilation
 }
 
 // QueryError décrit une requête invalide. Position est un décalage en caractères
@@ -97,63 +98,8 @@ func Parse(query string) (*Node, error) {
 		}
 		return nil, qerr(ErrUnexpectedToken, t.pos, "élément inattendu « "+t.value+" »")
 	}
-	compile(n)
+	compile(n, Options{})
 	return n, nil
-}
-
-// Query est une requête compilée, prête à être évaluée sur de nombreux documents.
-type Query struct {
-	root *Node
-}
-
-// Compile accepte une requête vide ou blanche, qui correspond à tous les documents.
-func Compile(query string) (*Query, error) {
-	if strings.TrimSpace(query) == "" {
-		return &Query{}, nil
-	}
-	n, err := Parse(query)
-	if err != nil {
-		return nil, err
-	}
-	return &Query{root: n}, nil
-}
-
-// Match évalue la requête ; aucune donnée externe n'est lue ni modifiée.
-func (q *Query) Match(d Document) bool {
-	if q == nil {
-		return false
-	}
-	if q.root == nil {
-		return true
-	}
-	return q.root.Match(d)
-}
-
-// Root renvoie l'AST (nil pour une requête vide).
-func (q *Query) Root() *Node { return q.root }
-
-// Terms liste les termes et expressions de texte non niés, pour surligner des extraits.
-func (q *Query) Terms() []string {
-	var out []string
-	var walk func(n *Node, negated bool)
-	walk = func(n *Node, negated bool) {
-		if n == nil {
-			return
-		}
-		switch n.Op {
-		case "NOT":
-			walk(n.Left, !negated)
-		case "term", "phrase":
-			if !negated {
-				out = append(out, n.Value)
-			}
-		default:
-			walk(n.Left, negated)
-			walk(n.Right, negated)
-		}
-	}
-	walk(q.root, false)
-	return out
 }
 
 func lex(s string) ([]token, error) {
@@ -334,136 +280,4 @@ func (p *parser) unary() (*Node, error) {
 
 func positional(n *Node) bool {
 	return n != nil && (n.Op == "term" || n.Op == "phrase" || n.Op == "NEAR")
-}
-
-// compile précalcule les jokers et les mots des expressions (une seule fois par requête).
-func compile(n *Node) {
-	if n == nil {
-		return
-	}
-	switch n.Op {
-	case "term", "tag", "entity":
-		n.matcher = globRegexp(n.Value)
-	case "phrase":
-		n.phrase = words(n.Value)
-	}
-	compile(n.Left)
-	compile(n.Right)
-}
-
-// Match évalue l'AST. Les mots du texte sont découpés une seule fois par appel.
-func (n *Node) Match(d Document) bool {
-	var ws []string
-	split := false
-	var eval func(n *Node) bool
-	eval = func(n *Node) bool {
-		if n == nil {
-			return false
-		}
-		switch n.Op {
-		case "AND":
-			return eval(n.Left) && eval(n.Right)
-		case "OR":
-			return eval(n.Left) || eval(n.Right)
-		case "NOT":
-			return !eval(n.Left)
-		case "tag", "entity":
-			values := d.Tags
-			if n.Op == "entity" {
-				values = d.Entities
-			}
-			for _, v := range values {
-				if n.glob(v) {
-					return true
-				}
-			}
-			return false
-		default:
-			if !split {
-				ws, split = words(d.Text), true
-			}
-			return len(n.spans(ws)) > 0
-		}
-	}
-	return eval(n)
-}
-
-type span struct{ start, end int }
-
-func words(s string) []string {
-	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_'
-	})
-}
-
-func globRegexp(pattern string) *regexp.Regexp {
-	p := regexp.QuoteMeta(strings.ToLower(pattern))
-	p = strings.ReplaceAll(p, `\*`, ".*")
-	p = strings.ReplaceAll(p, `\?`, ".")
-	re, err := regexp.Compile("^(?:" + p + ")$")
-	if err != nil {
-		return nil
-	}
-	return re
-}
-
-func (n *Node) glob(value string) bool {
-	re := n.matcher
-	if re == nil {
-		re = globRegexp(n.Value) // AST construit à la main, sans compile()
-	}
-	return re != nil && re.MatchString(strings.ToLower(value))
-}
-
-func (n *Node) spans(ws []string) []span {
-	out := []span{}
-	switch n.Op {
-	case "NEAR":
-		seen := map[span]bool{}
-		for _, a := range n.Left.spans(ws) {
-			for _, b := range n.Right.spans(ws) {
-				if a.start <= b.end && b.start <= a.end {
-					continue
-				}
-				gap := b.start - a.end - 1
-				if a.start > b.end {
-					gap = a.start - b.end - 1
-				}
-				if gap <= n.Distance {
-					s := span{min(a.start, b.start), max(a.end, b.end)}
-					if !seen[s] {
-						out = append(out, s)
-						seen[s] = true
-					}
-				}
-			}
-		}
-	case "phrase":
-		ps := n.phrase
-		if ps == nil {
-			ps = words(n.Value)
-		}
-		if len(ps) == 0 {
-			return out
-		}
-		for i := 0; i+len(ps) <= len(ws); i++ {
-			ok := true
-			for j, p := range ps {
-				if ws[i+j] != p {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				out = append(out, span{i, i + len(ps) - 1})
-			}
-		}
-	case "term":
-		for i, w := range ws {
-			if n.glob(w) {
-				out = append(out, span{i, i})
-			}
-		}
-	}
-	return out
 }

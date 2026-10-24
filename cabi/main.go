@@ -13,10 +13,22 @@ import "C"
 
 import (
 	"encoding/json"
-	"fmt"
+	"sync"
 	"unsafe"
 
 	"github.com/bizc0m/NYX-MD/nyxmd"
+)
+
+// ABIVersion augmente quand une opération change ou apparaît. 2 : poignées, search.find, options.
+const ABIVersion = 2
+
+// Requêtes compilées conservées entre les appels (compilées une fois, évaluées sur de nombreux lots).
+const maxHandles = 1024
+
+var (
+	handlesMu  sync.Mutex
+	handles    = map[int64]*nyxmd.Query{}
+	nextHandle int64
 )
 
 type request struct {
@@ -29,6 +41,8 @@ type request struct {
 	Syntax    *nyxmd.Syntax    `json:"syntax"`
 	Label     string           `json:"label"`
 	URL       string           `json:"url"`
+	Handle    int64            `json:"handle"`
+	Options   nyxmd.Options    `json:"options"`
 }
 
 type apiError struct {
@@ -44,7 +58,13 @@ func fail(code, msg string) map[string]any {
 func handle(raw []byte) (resp map[string]any) {
 	defer func() {
 		if r := recover(); r != nil {
-			resp = fail("internal_error", fmt.Sprint(r))
+			msg := "panique interne"
+			if e, ok := r.(error); ok {
+				msg = e.Error()
+			} else if str, ok := r.(string); ok {
+				msg = str
+			}
+			resp = fail("internal_error", msg)
 		}
 	}()
 	var req request
@@ -57,20 +77,62 @@ func handle(raw []byte) (resp map[string]any) {
 	}
 	switch req.Op {
 	case "version":
-		return map[string]any{"ok": true, "version": nyxmd.Version, "abi": 1}
-	case "search.validate", "search.match":
-		q, err := nyxmd.Compile(req.Query)
-		if err != nil {
-			qe := err.(*nyxmd.QueryError)
-			return map[string]any{"ok": false, "error": apiError{Code: qe.Code, Message: qe.Message, Position: qe.Position}}
+		return map[string]any{"ok": true, "version": nyxmd.Version, "abi": ABIVersion}
+	case "search.compile":
+		q, errResp := compileQuery(req)
+		if errResp != nil {
+			return errResp
 		}
-		resp := map[string]any{"ok": true, "terms": q.Terms()}
-		if req.Op == "search.match" {
+		handlesMu.Lock()
+		defer handlesMu.Unlock()
+		if len(handles) >= maxHandles {
+			return fail("too_many_handles", "trop de requêtes compilées ouvertes (search.release oublié ?)")
+		}
+		nextHandle++
+		handles[nextHandle] = q
+		return map[string]any{"ok": true, "handle": nextHandle, "terms": nonNilStrings(q.Terms())}
+	case "search.release":
+		handlesMu.Lock()
+		delete(handles, req.Handle)
+		handlesMu.Unlock()
+		return map[string]any{"ok": true}
+	case "search.validate", "search.match", "search.find":
+		var q *nyxmd.Query
+		if req.Handle != 0 {
+			handlesMu.Lock()
+			q = handles[req.Handle]
+			handlesMu.Unlock()
+			if q == nil {
+				return fail("unknown_handle", "requête compilée inconnue ou déjà libérée")
+			}
+		} else {
+			var errResp map[string]any
+			if q, errResp = compileQuery(req); errResp != nil {
+				return errResp
+			}
+		}
+		resp := map[string]any{"ok": true, "terms": nonNilStrings(q.Terms())}
+		switch req.Op {
+		case "search.match":
 			matches := make([]bool, len(req.Documents))
 			for i, d := range req.Documents {
 				matches[i] = q.Match(d)
 			}
 			resp["matches"] = matches
+		case "search.find":
+			type found struct {
+				Match bool         `json:"match"`
+				Spans []nyxmd.Span `json:"spans"`
+			}
+			results := make([]found, len(req.Documents))
+			for i, d := range req.Documents {
+				ok, spans := q.Find(d)
+				if spans == nil {
+					spans = []nyxmd.Span{}
+				}
+				results[i] = found{ok, spans}
+			}
+			resp["results"] = results
 		}
 		return resp
 	case "variables.render":
@@ -97,6 +159,22 @@ func handle(raw []byte) (resp map[string]any) {
 	default:
 		return fail("unknown_op", "opération inconnue « "+req.Op+" »")
 	}
+}
+
+func compileQuery(req request) (*nyxmd.Query, map[string]any) {
+	q, err := nyxmd.CompileWith(req.Query, req.Options)
+	if err != nil {
+		qe := err.(*nyxmd.QueryError)
+		return nil, map[string]any{"ok": false, "error": apiError{Code: qe.Code, Message: qe.Message, Position: qe.Position}}
+	}
+	return q, nil
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func nonNil(d []nyxmd.Diagnostic) []nyxmd.Diagnostic {

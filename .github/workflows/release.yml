@@ -1,0 +1,34 @@
+# Publication d'un tag vX.Y.Z : release GitHub avec les notes du CHANGELOG,
+# l'archive de l'artefact (construit par la CI) et son empreinte SHA-256.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Artefact construit par la CI et à jour
+        run: |
+          test "$(git log -1 --format=%ae -- artifacts/)" = "41898282+github-actions[bot]@users.noreply.github.com"
+          test "$(./scripts/source-hash.sh)" = "$(cat artifacts/SOURCE_SHA256)"
+      - name: Archive et empreinte
+        run: |
+          ditto -c -k --keepParent artifacts/CNyxMD.xcframework CNyxMD.xcframework.zip
+          shasum -a 256 CNyxMD.xcframework.zip artifacts/CNyxMD.xcframework/macos-arm64_x86_64/libnyxmd.a > SHA256SUMS.txt
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          v="${TAG#v}"
+          awk -v v="$v" '$0 ~ "^## "v" " {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" CNyxMD.xcframework.zip SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" --title "NYX-MD $v" --notes-file notes.md CNyxMD.xcframework.zip SHA256SUMS.txt
+          fi
