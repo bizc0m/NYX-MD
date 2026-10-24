@@ -4,7 +4,7 @@ Un moteur Go unique (`nyxmd/`), exposé par :
 
 | Consommateur | Accès | Dépendance |
 |---|---|---|
-| Go | package `github.com/bizc0m/NYX-MD/nyxmd` | module Go, tag `vX.Y.Z` (dépôt privé : `GOPRIVATE=github.com/bizc0m/*`) |
+| Go | package `github.com/bizc0m/NYX-MD/nyxmd` | module Go, tag `vX.Y.Z` (dépôt public) |
 | Swift | produit `NyxMD` (paquet à la racine) | Swift Package Manager, tag `X.Y.Z`/`vX.Y.Z` |
 | C | `include/nyxmd.h`, bibliothèque `CNyxMD.xcframework` | artefact versionné dans `artifacts/` |
 
