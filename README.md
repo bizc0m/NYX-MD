@@ -6,7 +6,7 @@ Module partagé de variables et de recherche booléenne pour les éditeurs de te
 
 - Moteur Go implémenté et testé : recherche booléenne (grammaire NyxBoolean) et variables (`nyxmd/`).
 - Adaptateurs : interface C (`cabi/`, `include/nyxmd.h`), paquet Swift `NyxMD` (bibliothèque universelle macOS 13+ dans `artifacts/`).
-- Consommateur en cours d'intégration : SimpleEdit Bold (dépôt MDMistress). NoteMistress, Nyx et PromptMistress ne sont **pas** encore migrés.
+- Consommateur intégré et testé : SimpleEdit Bold v1.6 (dépôt MDMistress, commit 0cdb5d8), NyxMD exact 0.1.0. NoteMistress, Nyx et PromptMistress ne sont **pas** encore migrés.
 - Documentation : [docs/API.md](docs/API.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md).
 
 ## Développement
