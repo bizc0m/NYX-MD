@@ -9,6 +9,11 @@ Module partagé de variables, de recherche booléenne et de notes pour les édit
 - Consommateurs : SimpleEdit Bold v4.2 (MDMistress, master) sur 0.3.0 (couche de notes comprise). Migrés sur branches à relire, passées en 0.3.0 le 2026-10-25 : Nyx `m5/nyx-boolean-nyxmd`, PromptMistress `feat/nyx-md`, NoteMistress `feat/nyx-md-variables`.
 - Documentation : [docs/API.md](docs/API.md), [docs/CONTRACT.md](docs/CONTRACT.md), [docs/SIZE.md](docs/SIZE.md), [CHANGELOG.md](CHANGELOG.md), [ORIGIN.md](ORIGIN.md). Licence MIT.
 
+## Catalogue / explorateur expérimental (branche de travail)
+
+Les produits Swift `NyxCatalog` et `NyxExplorerUI` ajoutent un catalogue SQLite partagé et un explorateur AppKit à un/deux panneaux, sans modifier le moteur Go ; voir [audit, architecture, usage et limites](docs/EXPLORER.md) et [validation](docs/EXPLORER_VALIDATION.md).
+Cette branche ne constitue pas une nouvelle version distribuée ; les consommateurs doivent épingler le commit testé avant adoption.
+
 ## Développement
 
 ```sh

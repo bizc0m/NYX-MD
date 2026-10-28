@@ -5,7 +5,7 @@ import NyxMD
 public enum ResourceKind: String, Codable, CaseIterable, Sendable { case link, file, card }
 public enum NodeKind: String, Codable, CaseIterable, Sendable { case folder, tag, context }
 public enum HierarchyMatch: String, Codable, Sendable { case exact, descendants }
-public enum ReferenceStatus: String, Codable, Sendable { case available, missing, denied, stale }
+public enum ReferenceStatus: String, Codable, Sendable { case available, missing, denied, stale, replaced }
 
 public struct CatalogResource: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
@@ -177,9 +177,12 @@ public enum CatalogError: Error, LocalizedError {
 /// Chaque hôte doit appliquer ses propres autorisations AVANT de présenter les résultats.
 public struct CatalogAccess {
     public var permits: (CatalogResource) -> Bool
-    public init(permits: @escaping (CatalogResource) -> Bool) { self.permits = permits }
+    public let allowsOwnerOperations: Bool
+    public init(allowsOwnerOperations: Bool = false, permits: @escaping (CatalogResource) -> Bool) {
+        self.allowsOwnerOperations = allowsOwnerOperations; self.permits = permits
+    }
     public static var localUser: CatalogAccess {
-        CatalogAccess { r in
+        CatalogAccess(allowsOwnerOperations: true) { r in
             guard r.kind == .file else { return true }
             guard let status = try? LocalFileConnector.resolved(r).1 else { return false }
             return status != .denied

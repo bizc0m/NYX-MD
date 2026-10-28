@@ -74,6 +74,14 @@ public final class CatalogStore {
     private let lock = NSRecursiveLock()
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private struct SearchCache {
+        var dataVersion: String
+        var state: CatalogSnapshot
+        var resources: [CatalogResource]
+        var exact: [String: NyxDocument]
+        var expanded: [String: NyxDocument]
+    }
+    private var searchCache: SearchCache?
 
     public static func defaultURL() throws -> URL {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
@@ -111,8 +119,28 @@ public final class CatalogStore {
         lock.lock(); defer { lock.unlock() }; return try read()
     }
     public func revision() throws -> Int64 { try snapshot().revision }
+    /// Presentation snapshot, filtered before passing data to UI or a connector.
+    public func snapshot(access: CatalogAccess) throws -> CatalogSnapshot {
+        var state = try snapshot()
+        state.resources = state.resources.filter(access.permits)
+        if !access.allowsOwnerOperations { state = filtered(state) }
+        return state
+    }
+    private func filtered(_ input: CatalogSnapshot) -> CatalogSnapshot {
+        var state = input
+        let byID = Dictionary(uniqueKeysWithValues: state.nodes.map { ($0.id, $0) })
+        var visible = state.resources.reduce(into: Set<UUID>()) { $0.formUnion($1.nodeIDs) }
+        for id in Array(visible) {
+            var cursor = byID[id]?.parentID
+            while let parent = cursor, visible.insert(parent).inserted { cursor = byID[parent]?.parentID }
+        }
+        state.nodes = state.nodes.filter { visible.contains($0.id) }; state.searches = []
+        return state
+    }
+
 
     private func persist(_ state: CatalogSnapshot) throws {
+        searchCache = nil
         try db.write("INSERT OR REPLACE INTO catalog(id,payload) VALUES(1,?)", [try encoded(state)])
         try db.exec("DELETE FROM projection")
         for r in state.resources {
@@ -149,31 +177,42 @@ public final class CatalogStore {
         let engine = try NyxQuery(query.boolean, options: NyxSearchOptions(foldAccents: query.foldAccents))
         lock.lock(); defer { lock.unlock() }
         try db.exec("BEGIN")
-        let state: CatalogSnapshot
-        let records: [[String]]
+        let cache: SearchCache
         do {
-            state = try read()
-            records = try db.rows("SELECT id,\(query.metadataMatch == .exact ? "exact" : "expanded") FROM projection ORDER BY id")
+            let version = try db.rows("PRAGMA data_version").first?.first ?? "0"
+            if let existing = searchCache, existing.dataVersion == version { cache = existing }
+            else {
+                let state = try read()
+                let records = try db.rows("SELECT id,exact,expanded FROM projection")
+                var exact: [String: NyxDocument] = [:], expanded: [String: NyxDocument] = [:]
+                for record in records {
+                    exact[record[0]] = try decoder.decode(NyxDocument.self, from: Data(record[1].utf8))
+                    expanded[record[0]] = try decoder.decode(NyxDocument.self, from: Data(record[2].utf8))
+                }
+                let sorted = state.resources.sorted {
+                    let order = $0.title.localizedStandardCompare($1.title)
+                    return order == .orderedSame ? $0.id.uuidString < $1.id.uuidString : order == .orderedAscending
+                }
+                cache = SearchCache(dataVersion: version, state: state, resources: sorted, exact: exact, expanded: expanded)
+                searchCache = cache
+            }
             try db.exec("COMMIT")
         } catch { try? db.exec("ROLLBACK"); throw error }
-        let byID = Dictionary(uniqueKeysWithValues: state.resources.map { ($0.id.uuidString, $0) })
+        let state = cache.state
+        let documents = query.metadataMatch == .exact ? cache.exact : cache.expanded
         let filters: [Set<UUID>] = try query.nodes.map { f in
             guard state.nodes.contains(where: { $0.id == f.id }) else { throw CatalogError.notFound }
             return f.match == .exact ? [f.id] : state.descendants(of: f.id)
         }
         var resources: [CatalogResource] = [], docs: [NyxDocument] = []
-        for record in records {
-            guard let r = byID[record[0]], access.permits(r),
-                  query.kinds.isEmpty || query.kinds.contains(r.kind),
-                  filters.allSatisfy({ !r.nodeIDs.isDisjoint(with: $0) }) else { continue }
-            resources.append(r)
-            docs.append(try decoder.decode(NyxDocument.self, from: Data(record[1].utf8)))
+        for r in cache.resources {
+            guard access.permits(r), query.kinds.isEmpty || query.kinds.contains(r.kind),
+                  filters.allSatisfy({ !r.nodeIDs.isDisjoint(with: $0) }),
+                  let document = documents[r.id.uuidString] else { continue }
+            resources.append(r); docs.append(document)
         }
         let matches = try engine.match(docs)
-        return zip(resources, matches).compactMap { $0.1 ? $0.0 : nil }.sorted {
-            let order = $0.title.localizedStandardCompare($1.title)
-            return order == .orderedSame ? $0.id.uuidString < $1.id.uuidString : order == .orderedAscending
-        }
+        return zip(resources, matches).compactMap { $0.1 ? $0.0 : nil }
     }
 
     /// Exports only allowed resources and their ancestors; saved searches can disclose hidden names,
@@ -181,13 +220,7 @@ public final class CatalogStore {
     public func export(to destination: URL, access: CatalogAccess) throws {
         var state = try snapshot()
         state.resources = state.resources.filter(access.permits)
-        let byID = Dictionary(uniqueKeysWithValues: state.nodes.map { ($0.id, $0) })
-        var visible = state.resources.reduce(into: Set<UUID>()) { $0.formUnion($1.nodeIDs) }
-        for id in Array(visible) {
-            var cursor = byID[id]?.parentID
-            while let parent = cursor, visible.insert(parent).inserted { cursor = byID[parent]?.parentID }
-        }
-        state.nodes = state.nodes.filter { visible.contains($0.id) }; state.searches = []
+        state = filtered(state)
         try writeExport(state, to: destination)
     }
     public func backup(to destination: URL) throws { try writeExport(snapshot(), to: destination) }

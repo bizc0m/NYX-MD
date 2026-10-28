@@ -130,6 +130,36 @@ final class CatalogTests: XCTestCase {
         XCTAssertThrowsError(try db.moveFile(r.id, to: from, expectedRevision: db.revision(), access: deny))
         XCTAssertTrue(FileManager.default.fileExists(atPath: to.path))
     }
+    func testCachedSearchRechecksPermissionsAndExternalChanges() throws {
+        let a = try store(), b = try store()
+        let (_, _, _, r) = try fixture(a)
+        var allowed = true
+        let access = CatalogAccess { _ in allowed }
+        XCTAssertEqual(try a.search(CatalogQuery(), access: access).count, 1)
+        allowed = false
+        XCTAssertTrue(try a.search(CatalogQuery(), access: access).isEmpty)
+        XCTAssertTrue(try a.snapshot(access: access).nodes.isEmpty)
+        allowed = true
+        try b.transact { state in
+            var changed = r; changed.title = "Changed"; CatalogActions.upsert(changed, in: &state)
+        }
+        XCTAssertEqual(try a.search(CatalogQuery(boolean: "Changed"), access: access).count, 1)
+        XCTAssertTrue(try a.search(CatalogQuery(boolean: "Audit"), access: access).isEmpty)
+    }
+
+    func testReplacedFileIdentityRequiresRelink() throws {
+        let path = directory.appendingPathComponent("file.txt"), old = directory.appendingPathComponent("old.txt")
+        try Data("original".utf8).write(to: path)
+        var r = try LocalFileConnector.reference(path, source: "test")
+        r.bookmark = nil // Explicit path-only connector, also exercised on macOS.
+        try FileManager.default.moveItem(at: path, to: old)
+        try Data("replacement".utf8).write(to: path)
+        XCTAssertEqual(try LocalFileConnector.resolved(r).1, .replaced)
+        let relinked = try LocalFileConnector.relink(r, to: path)
+        XCTAssertEqual(relinked.id, r.id)
+        XCTAssertEqual(try LocalFileConnector.resolved(relinked).1, .available)
+    }
+
     func testMultiStepHistoryAndBatchRollback() throws {
         let db = try store(), history = CatalogHistory()
         let a = CatalogResource(kind: .card, title: "One", source: "test")

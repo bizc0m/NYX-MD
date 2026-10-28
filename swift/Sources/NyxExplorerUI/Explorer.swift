@@ -91,7 +91,7 @@ public final class NyxExplorerController: NSViewController {
     }
     public func refresh() {
         do {
-            let state = try store.snapshot(); seenRevision = state.revision
+            let state = try store.snapshot(access: access); seenRevision = state.revision
             try panes.forEach { try $0.reload(state) }
             status.stringValue = "Catalogue partagé · révision \(state.revision) · classement des références sans copie des fichiers"
         } catch { report(error) }
@@ -127,7 +127,7 @@ public final class NyxExplorerController: NSViewController {
             let f = NSTextField(string: pair.1); f.placeholderString = pair.0; f.setAccessibilityLabel(pair.0); return f
         }
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading
-        stack.frame = NSRect(x: 0, y: 0, width: 440, height: CGFloat(inputs.count * 34 + (options == nil ? 0 : 34)))
+        stack.frame = NSRect(x: 0, y: 0, width: 440, height: CGFloat(inputs.count * 52 + (options == nil ? 0 : 40)))
         for (i, f) in inputs.enumerated() {
             let label = NSTextField(labelWithString: fields[i].0); label.font = .systemFont(ofSize: 11)
             let row = NSStackView(views: [label, f]); row.orientation = .vertical; row.alignment = .leading
@@ -247,9 +247,10 @@ public final class NyxExplorerController: NSViewController {
         case 6, 8:
             let p = NSSavePanel(); p.nameFieldStringValue = action == 6 ? "nyx-backup.json" : "nyx-export.json"
             guard p.runModal() == .OK, let url = p.url else { return }
-            do { if action == 6 { try store.backup(to: url) } else { try store.export(to: url, access: access) } }
+            do { if action == 6 && access.allowsOwnerOperations { try store.backup(to: url) } else { try store.export(to: url, access: access) } }
             catch { report(error) }
         case 7:
+            guard access.allowsOwnerOperations else { report(CatalogError.denied); return }
             let p = NSOpenPanel(); guard p.runModal() == .OK, let url = p.url, confirm("Remplacer le catalogue par cette sauvegarde ?") else { return }
             do { history.record(try store.restore(from: url, expectedRevision: seenRevision)); fileUndo = nil; refresh() }
             catch { report(error) }
@@ -346,7 +347,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         _ = view; self.state = state
         let selection = Set(selectedResources.map(\.id))
         scopeChoices = state.nodes.sorted { state.path(of: $0.id).localizedStandardCompare(state.path(of: $1.id)) == .orderedAscending }
-        if let scope, !state.nodes.contains(where: { $0.id == scope }) { self.scope = nil }
+        if let scope, !state.nodes.contains(where: { $0.id == scope }) { self.scope = nil; query.nodes = []; currentSavedID = nil }
         scopes.removeAllItems(); scopes.addItem(withTitle: "Toutes les ressources")
         scopes.addItems(withTitles: scopeChoices.map { "\($0.kind == .tag ? "#" : $0.kind == .context ? "@" : "📁")\(state.path(of: $0.id))" })
         scopes.selectItem(at: scope.flatMap { id in scopeChoices.firstIndex(where: { $0.id == id }).map { $0 + 1 } } ?? 0)
@@ -361,6 +362,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         table.selectRowIndexes(IndexSet(resources.enumerated().compactMap { selection.contains($0.element.id) ? $0.offset + childNodes.count : nil }), byExtendingSelection: false)
         count.stringValue = "\(resources.count) ressource(s)"
     }
+    private var pendingSearch: DispatchWorkItem?
     private var sortMode = 0
     private func sortResources() {
         if sortMode == 1 { resources.sort { $0.updatedAt > $1.updatedAt } }
@@ -380,7 +382,11 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         query.metadataMatch = descendants.state == .on ? .descendants : .exact; owner.refresh()
     }
     func controlTextDidBeginEditing(_ obj: Notification) { owner.focus(self) }
-    func controlTextDidChange(_ obj: Notification) { owner.focus(self); owner.refresh() }
+    func controlTextDidChange(_ obj: Notification) {
+        owner.focus(self); pendingSearch?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.owner.refresh() }
+        pendingSearch = work; DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
     @objc func openSelection() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         if childNodes.indices.contains(row) { scope = childNodes[row].id; query.nodes = []; owner.refresh() }

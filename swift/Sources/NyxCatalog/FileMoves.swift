@@ -28,7 +28,9 @@ extension CatalogStore {
                 }
                 try FileManager.default.moveItem(at: source, to: destination)
                 movedFrom = source
-                state.resources[i] = try LocalFileConnector.relink(resource, to: destination)
+                let relinked = try LocalFileConnector.relink(resource, to: destination)
+                guard access.permits(relinked) else { throw CatalogError.denied }
+                state.resources[i] = relinked
             }
             return FileMoveReceipt(resourceID: id, from: movedFrom!, to: destination, expectedRevision: token.expectedRevision)
         } catch {

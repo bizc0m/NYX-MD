@@ -1,3 +1,10 @@
+## Non publié — aperçu catalogue / explorateur 0.1 (2026-10-28)
+
+- Produits Swift séparés NyxCatalog (SQLite système) et NyxExplorerUI (AppKit), sans changement du moteur ni de son contrat 0.3.0
+- Références liens/fichiers/fiches, dossiers/tags/contextes hiérarchiques, requêtes exactes/descendants, collections dynamiques, transactions et annulation contrôlée par révision
+- Explorateur un/deux panneaux, clavier, sélection et classement par lots, glisser-déposer, connecteur fichier avec réassociation et déplacement physique explicite
+- Sauvegarde/restauration/export et tests isolés ; aucune release, installation ou fusion automatique
+
 # Changelog
 
 Format SemVer. Toute modification du comportement est listée ici avant publication.
