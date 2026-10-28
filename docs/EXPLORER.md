@@ -96,3 +96,5 @@ Les services externes et applications hors Swift/AppKit nécessitent des connect
 
 Les projections décodées et l'ordre de tri sont mis en cache en mémoire, invalidés sur chaque écriture locale ou changement de `PRAGMA data_version` d'une autre connexion ; les permissions de fichiers sont revérifiées à chaque recherche, y compris avec un cache chaud, et la saisie est temporisée de 180 ms.
 Un identifiant système de fichier (volume/inode) détecte les remplacements au même chemin ; ils sont signalés `replaced` et exigent une réassociation explicite avant ouverture/déplacement.
+
+Développement Linux (sans interface AppKit) : construire le pont C avec `go build -buildmode=c-shared -o .build/native/libnyxmd.so ./cabi`, puis `LD_LIBRARY_PATH="$PWD/.build/native" swift test --jobs 1 -Xlinker -L"$PWD/.build/native"` ; SQLite et ses en-têtes doivent être installés ; le produit macOS continue d'utiliser le XCFramework existant.

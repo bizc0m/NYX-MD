@@ -92,8 +92,12 @@ public final class NyxExplorerController: NSViewController {
     public func refresh() {
         do {
             let state = try store.snapshot(access: access); seenRevision = state.revision
-            try panes.forEach { try $0.reload(state) }
-            status.stringValue = "Catalogue partagé · révision \(state.revision) · classement des références sans copie des fichiers"
+            var firstError: Error?
+            for pane in panes {
+                do { try pane.reload(state) } catch { if firstError == nil { firstError = error } }
+            }
+            if let firstError { report(firstError) }
+            else { status.stringValue = "Catalogue partagé · révision \(state.revision) · classement des références sans copie des fichiers" }
         } catch { report(error) }
     }
     @objc public func toggleDualPane() {
