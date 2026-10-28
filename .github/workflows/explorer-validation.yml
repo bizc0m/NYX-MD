@@ -1,0 +1,25 @@
+name: Explorer validation
+on:
+  push:
+    branches: [feat/transversal-explorer]
+  pull_request:
+    paths: ['swift/**', 'Package.swift', '.github/workflows/explorer-validation.yml']
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version && uname -m
+      - run: swift test
+      - run: swift build -c release --product NyxExplorerDemo
+      - run: swift run -c release NyxCatalogBenchmark 10000
+      - name: Binary weight, same architecture, no user data
+        run: |
+          swift build -c release --product NyxEngineBaseline
+          bin=$(swift build -c release --show-bin-path)
+          cp "$bin/NyxExplorerDemo" /tmp/nyx-explorer-measure
+          cp "$bin/NyxEngineBaseline" /tmp/nyx-baseline-measure
+          strip /tmp/nyx-explorer-measure /tmp/nyx-baseline-measure
+          stat -f '%N %z bytes' /tmp/nyx-explorer-measure /tmp/nyx-baseline-measure | tee -a "$GITHUB_STEP_SUMMARY"

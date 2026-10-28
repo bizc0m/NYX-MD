@@ -1,0 +1,5 @@
+module CNyxMD [system] {
+    header "../../include/nyxmd.h"
+    link "nyxmd"
+    export *
+}
