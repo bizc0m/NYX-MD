@@ -192,7 +192,7 @@ public final class CatalogStore {
     }
     public func backup(to destination: URL) throws { try writeExport(snapshot(), to: destination) }
     private func writeExport(_ state: CatalogSnapshot, to destination: URL) throws {
-        guard destination.standardizedFileURL != url.standardizedFileURL else { throw CatalogError.invalid("La sauvegarde ne peut remplacer la base") }
+        guard !Set([url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")].map { $0.resolvingSymlinksInPath().standardizedFileURL }).contains(destination.resolvingSymlinksInPath().standardizedFileURL) else { throw CatalogError.invalid("La sauvegarde ne peut remplacer la base") }
         let temp = destination.deletingLastPathComponent().appendingPathComponent(".nyx-export-\(UUID().uuidString)")
         let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
         guard fd >= 0 else { throw CatalogError.database("Destination non accessible") }
@@ -242,5 +242,25 @@ public enum CatalogActions {
         }
         state.nodes.removeAll { removed.contains($0.id) }
         for i in state.resources.indices { state.resources[i].nodeIDs.subtract(removed) }
+    }
+}
+
+/// Session-only multi-step undo; revision fencing prevents overwriting another writer.
+public final class CatalogHistory {
+    private var entries: [CatalogUndo] = []
+    public init() {}
+    public func clear() { entries.removeAll() }
+    public func record(_ token: CatalogUndo) {
+        if let last = entries.last, last.expectedRevision != token.snapshot.revision { entries.removeAll() }
+        entries.append(token)
+        if entries.count > 50 { entries.removeFirst() }
+    }
+    public func undo(in store: CatalogStore) throws {
+        guard let token = entries.last else { return }
+        let inverse = try store.undo(token)
+        entries.removeLast()
+        if let older = entries.popLast() {
+            entries.append(CatalogUndo(snapshot: older.snapshot, expectedRevision: inverse.expectedRevision))
+        }
     }
 }

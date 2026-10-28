@@ -30,7 +30,7 @@ public final class NyxExplorerController: NSViewController {
     private var status = NSTextField(labelWithString: "")
     private var timer: Timer?
     private var seenRevision: Int64 = -1
-    private var undoTokens: [CatalogUndo] = []
+    private let history = CatalogHistory()
     private var fileUndo: FileMoveReceipt?
     private var dualButton = NSButton()
     fileprivate var active: ExplorerPane? { panes.first(where: { $0.isActive }) ?? panes.first }
@@ -54,11 +54,12 @@ public final class NyxExplorerController: NSViewController {
         _ = add("+ Classement", #selector(createNode))
         _ = add("Modifier", #selector(editSelection))
         _ = add("Classer…", #selector(classifySelection))
+        _ = add("Déplacer réf…", #selector(moveReferences))
         _ = add("Annuler", #selector(undoLast))
         dualButton = add("Deux panneaux (F3)", #selector(toggleDualPane), "\u{F706}")
         let more = NSPopUpButton()
         more.addItems(withTitles: ["Actions…", "Retirer les fiches…", "Renommer / déplacer le classement…", "Retirer le classement…",
-                                  "Réassocier le fichier…", "Déplacer le fichier réel…", "Sauvegarder…", "Restaurer…", "Exporter les ressources visibles…"])
+                                  "Réassocier le fichier…", "Déplacer le fichier réel…", "Sauvegarder…", "Restaurer…", "Exporter les ressources visibles…", "Retirer un classement des fiches…", "Supprimer la collection sélectionnée…"])
         more.target = self; more.action = #selector(moreAction(_:)); tools.addArrangedSubview(more)
         split.isVertical = true; split.dividerStyle = .thin
         for _ in 0..<2 {
@@ -104,14 +105,14 @@ public final class NyxExplorerController: NSViewController {
     fileprivate func report(_ error: Error) { status.stringValue = error.localizedDescription; NSSound.beep() }
     fileprivate func perform(_ operation: (inout CatalogSnapshot) throws -> Void) {
         do {
-            undoTokens.append(try store.transact(expectedRevision: seenRevision, operation)); fileUndo = nil
-            if undoTokens.count > 50 { undoTokens.removeFirst() }; refresh()
-        } catch { report(error); refresh() }
+            history.record(try store.transact(expectedRevision: seenRevision, operation)); fileUndo = nil
+            refresh()
+        } catch { refresh(); report(error) }
     }
     @objc public func undoLast() {
         do {
             if let receipt = fileUndo { _ = try store.undoFileMove(receipt, access: access); fileUndo = nil }
-            else if let token = undoTokens.last { _ = try store.undo(token); undoTokens.removeLast() }
+            else { try history.undo(in: store) }
             refresh()
         } catch { report(error) }
     }
@@ -182,6 +183,16 @@ public final class NyxExplorerController: NSViewController {
         let ids = Set(pane.selectedResources.map(\.id)), target = nodes[result.1]
         perform { try CatalogActions.classify(ids, into: target.id, in: &$0) }
     }
+    @objc public func moveReferences() {
+        guard let pane = active, let from = pane.scope,
+              pane.state.nodes.contains(where: { $0.id == from && $0.kind == .folder }),
+              !pane.selectedResources.isEmpty else { report(CatalogError.invalid("Sélectionnez les références dans leur dossier source")); return }
+        let folders = pane.state.nodes.filter { $0.kind == .folder && $0.id != from }
+        guard !folders.isEmpty, let result = ask("Déplacer les références (fichiers réels inchangés)", fields: [],
+                                                options: folders.map { pane.state.path(of: $0.id) }) else { return }
+        let ids = Set(pane.selectedResources.map(\.id)), target = folders[result.1].id
+        perform { try CatalogActions.classify(ids, into: target, replacingFolder: from, in: &$0) }
+    }
     fileprivate func open(_ resource: CatalogResource) {
         guard access.permits(resource) else { report(CatalogError.denied); return }
         if resource.kind == .file {
@@ -227,7 +238,7 @@ public final class NyxExplorerController: NSViewController {
                   confirm("Déplacer le fichier réel vers \(destination.path) ? Aucun fichier existant ne sera remplacé") else { return }
             do {
                 fileUndo = try store.moveFile(r.id, to: destination, expectedRevision: seenRevision, access: access)
-                undoTokens.removeAll(); refresh()
+                history.clear(); refresh()
             } catch { report(error) }
         case 6, 8:
             let p = NSSavePanel(); p.nameFieldStringValue = action == 6 ? "nyx-backup.json" : "nyx-export.json"
@@ -236,15 +247,26 @@ public final class NyxExplorerController: NSViewController {
             catch { report(error) }
         case 7:
             let p = NSOpenPanel(); guard p.runModal() == .OK, let url = p.url, confirm("Remplacer le catalogue par cette sauvegarde ?") else { return }
-            do { undoTokens.append(try store.restore(from: url, expectedRevision: seenRevision)); fileUndo = nil; refresh() }
+            do { history.record(try store.restore(from: url, expectedRevision: seenRevision)); fileUndo = nil; refresh() }
             catch { report(error) }
+        case 9:
+            let selected = pane.selectedResources
+            let memberships = selected.reduce(into: Set<UUID>()) { $0.formUnion($1.nodeIDs) }
+            let nodes = pane.state.nodes.filter { memberships.contains($0.id) }
+            guard !selected.isEmpty, !nodes.isEmpty, let result = ask("Retirer une association des fiches sélectionnées", fields: [],
+                                                                     options: nodes.map { pane.state.path(of: $0.id) }) else { return }
+            let ids = Set(selected.map(\.id)), node = nodes[result.1].id
+            perform { state in for i in state.resources.indices where ids.contains(state.resources[i].id) { state.resources[i].nodeIDs.remove(node) } }
+        case 10:
+            guard let id = pane.currentSavedID, confirm("Supprimer cette collection enregistrée ? Les ressources sont conservées") else { return }
+            perform { $0.searches.removeAll { $0.id == id } }
         default: break
         }
     }
     // Stable test surface: no host defaults or installed app required.
     public var paneCount: Int { isDualPane ? 2 : 1 }
     public func setQuery(_ query: CatalogQuery, pane index: Int) {
-        _ = view; guard panes.indices.contains(index) else { return }; panes[index].query = query
+        _ = view; guard panes.indices.contains(index) else { return }; panes[index].scope = nil; panes[index].query = query
         panes[index].search.stringValue = query.boolean; refresh()
     }
     public func visibleResourceIDs(pane index: Int) -> [UUID] { panes.indices.contains(index) ? panes[index].resources.map(\.id) : [] }
@@ -252,7 +274,7 @@ public final class NyxExplorerController: NSViewController {
 
 private struct DragPayload: Codable { var catalog: String; var ids: [UUID]; var folder: UUID? }
 
-fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     unowned let owner: NyxExplorerController
     let table = ExplorerTable()
     let search = NSSearchField()
@@ -265,6 +287,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
     var scope: UUID?
     var state = CatalogSnapshot()
     var query = CatalogQuery()
+    var currentSavedID: UUID?
     var resources: [CatalogResource] = []
     private var childNodes: [CatalogNode] = []
     private static let dragType = NSPasteboard.PasteboardType("org.nyx-suite.catalog.resources.v1")
@@ -323,9 +346,11 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         scopes.addItems(withTitles: scopeChoices.map { "\($0.kind == .tag ? "#" : $0.kind == .context ? "@" : "📁")\(state.path(of: $0.id))" })
         scopes.selectItem(at: scope.flatMap { id in scopeChoices.firstIndex(where: { $0.id == id }).map { $0 + 1 } } ?? 0)
         saved.removeAllItems(); saved.addItem(withTitle: "Collections dynamiques…"); saved.addItems(withTitles: state.searches.map(\.name))
+        if let id = currentSavedID, let i = state.searches.firstIndex(where: { $0.id == id }) { saved.selectItem(at: i + 1) }
         query.boolean = search.stringValue
         query.nodes = scope.map { [NodeFilter($0, match: descendants.state == .on ? .descendants : .exact)] } ?? query.nodes
-        resources = try owner.store.search(query, access: owner.access)
+        do { resources = try owner.store.search(query, access: owner.access) }
+        catch { resources = []; childNodes = []; table.reloadData(); count.stringValue = error.localizedDescription; throw error }
         childNodes = query.boolean.isEmpty && query.kinds.isEmpty ? state.nodes.filter { $0.parentID == scope && (scope != nil || $0.parentID == nil) }.sorted { $0.name < $1.name } : []
         sortResources(); table.reloadData()
         table.selectRowIndexes(IndexSet(resources.enumerated().compactMap { selection.contains($0.element.id) ? $0.offset + childNodes.count : nil }), byExtendingSelection: false)
@@ -339,7 +364,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
     @objc private func sortChanged(_ sender: NSPopUpButton) { sortMode = sender.indexOfSelectedItem; sortResources(); table.reloadData() }
     @objc private func scopeChanged() {
         scope = scopes.indexOfSelectedItem > 0 ? scopeChoices[scopes.indexOfSelectedItem - 1].id : nil
-        query.nodes = []; owner.refresh()
+        query.nodes = []; currentSavedID = nil; owner.refresh()
     }
     @objc func goUp() {
         scope = scope.flatMap { id in state.nodes.first(where: { $0.id == id })?.parentID }; query.nodes = []; owner.refresh()
@@ -359,11 +384,14 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); a.accessoryView = field
         a.addButton(withTitle: "Enregistrer"); a.addButton(withTitle: "Annuler")
         guard a.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return }
-        owner.perform { $0.searches.append(SavedSearch(name: field.stringValue, query: self.query)) }
+        owner.perform { state in
+            if let i = state.searches.firstIndex(where: { $0.name == field.stringValue }) { state.searches[i].query = self.query }
+            else { state.searches.append(SavedSearch(name: field.stringValue, query: self.query)) }
+        }
     }
     @objc private func savedChanged() {
         let i = saved.indexOfSelectedItem - 1; guard state.searches.indices.contains(i) else { return }
-        query = state.searches[i].query; scope = nil; search.stringValue = query.boolean
+        currentSavedID = state.searches[i].id; query = state.searches[i].query; scope = nil; search.stringValue = query.boolean
         descendants.state = query.metadataMatch == .descendants ? .on : .off
         kind.selectItem(at: query.kinds.count == 1 ? ResourceKind.allCases.firstIndex(of: query.kinds.first!)! + 1 : 0)
         owner.refresh()

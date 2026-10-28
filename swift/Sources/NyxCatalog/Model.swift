@@ -180,8 +180,9 @@ public struct CatalogAccess {
     public init(permits: @escaping (CatalogResource) -> Bool) { self.permits = permits }
     public static var localUser: CatalogAccess {
         CatalogAccess { r in
-            guard r.kind == .file, let u = URL(string: r.locator) else { return true }
-            return !FileManager.default.fileExists(atPath: u.path) || FileManager.default.isReadableFile(atPath: u.path)
+            guard r.kind == .file else { return true }
+            guard let status = try? LocalFileConnector.resolved(r).1 else { return false }
+            return status != .denied
         }
     }
 }
