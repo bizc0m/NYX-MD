@@ -130,6 +130,22 @@ final class CatalogTests: XCTestCase {
         XCTAssertThrowsError(try db.moveFile(r.id, to: from, expectedRevision: db.revision(), access: deny))
         XCTAssertTrue(FileManager.default.fileExists(atPath: to.path))
     }
+    func testMultiStepHistoryAndBatchRollback() throws {
+        let db = try store(), history = CatalogHistory()
+        let a = CatalogResource(kind: .card, title: "One", source: "test")
+        let b = CatalogResource(kind: .card, title: "Two", source: "test")
+        history.record(try db.transact { $0.resources.append(a) })
+        history.record(try db.transact { $0.resources.append(b) })
+        try history.undo(in: db); XCTAssertEqual(try db.snapshot().resources.map(\.id), [a.id])
+        try history.undo(in: db); XCTAssertTrue(try db.snapshot().resources.isEmpty)
+        let before = try db.snapshot()
+        XCTAssertThrowsError(try db.transact { state in
+            state.resources.append(a)
+            state.resources.append(CatalogResource(kind: .link, title: "Invalid", locator: "javascript:alert(1)", source: "test"))
+        })
+        XCTAssertEqual(try db.snapshot(), before)
+    }
+
     func testSavedScopePreventsDestructiveNodeRemovalAndBuilderEscapesOperators() throws {
         let db = try store(); let (root, _, _, _) = try fixture(db)
         try db.transact { $0.searches.append(SavedSearch(name: "Parent", query: CatalogQuery(nodes: [NodeFilter(root.id)]))) }

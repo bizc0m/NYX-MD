@@ -26,7 +26,7 @@ public enum LocalFileConnector {
         #endif
         guard FileManager.default.fileExists(atPath: url.path) else { return (url, .missing) }
         guard FileManager.default.isReadableFile(atPath: url.path) else { return (url, .denied) }
-        return (url, stale || url != original ? .stale : .available)
+        return (url, stale || url.resolvingSymlinksInPath().standardizedFileURL != original.resolvingSymlinksInPath().standardizedFileURL ? .stale : .available)
     }
     /// Relink after an external move; stable catalogue identity and classification are preserved.
     public static func relink(_ resource: CatalogResource, to url: URL) throws -> CatalogResource {

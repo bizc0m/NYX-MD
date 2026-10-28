@@ -4,6 +4,8 @@ import AppKit
 import NyxCatalog
 
 fileprivate final class ExplorerTable: NSTableView {
+    var didFocus: (() -> Void)?
+    override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); if result { didFocus?() }; return result }
     var enter: (() -> Void)?, parent: (() -> Void)?, other: (() -> Void)?, edit: (() -> Void)?, undoAction: (() -> Void)?
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "z" { undoAction?(); return }
@@ -33,7 +35,9 @@ public final class NyxExplorerController: NSViewController {
     private let history = CatalogHistory()
     private var fileUndo: FileMoveReceipt?
     private var dualButton = NSButton()
-    fileprivate var active: ExplorerPane? { panes.first(where: { $0.isActive }) ?? panes.first }
+    private weak var focusedPane: ExplorerPane?
+    fileprivate var active: ExplorerPane? { focusedPane ?? panes.first }
+    fileprivate func focus(_ pane: ExplorerPane) { focusedPane = pane }
 
     public init(store: CatalogStore, source: String, access: CatalogAccess, onOpen: ((CatalogResource) -> Void)? = nil) {
         self.store = store; self.source = source; self.access = access; self.onOpen = onOpen
@@ -95,7 +99,7 @@ public final class NyxExplorerController: NSViewController {
     @objc public func toggleDualPane() {
         isDualPane.toggle(); panes[1].view.isHidden = !isDualPane
         dualButton.title = isDualPane ? "Un panneau (F3)" : "Deux panneaux (F3)"
-        if !isDualPane { view.window?.makeFirstResponder(panes[0].table) }
+        if !isDualPane { focusedPane = panes[0]; view.window?.makeFirstResponder(panes[0].table) }
         split.adjustSubviews()
     }
     fileprivate func focusOther(_ sender: ExplorerPane) {
@@ -319,6 +323,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         table.usesAlternatingRowBackgroundColors = true
         table.setAccessibilityLabel("Ressources du panneau")
         table.registerForDraggedTypes([Self.dragType, .fileURL, .URL]); table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
+        table.didFocus = { [weak self] in guard let self else { return }; self.owner.focus(self) }
         table.enter = { [weak self] in self?.openSelection() }; table.parent = { [weak self] in self?.goUp() }
         table.edit = { [weak self] in self?.owner.editSelection() }; table.other = { [weak self] in guard let self else { return }; self.owner.focusOther(self) }
         table.undoAction = { [weak self] in self?.owner.undoLast() }
@@ -363,6 +368,7 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
     }
     @objc private func sortChanged(_ sender: NSPopUpButton) { sortMode = sender.indexOfSelectedItem; sortResources(); table.reloadData() }
     @objc private func scopeChanged() {
+        owner.focus(self)
         scope = scopes.indexOfSelectedItem > 0 ? scopeChoices[scopes.indexOfSelectedItem - 1].id : nil
         query.nodes = []; currentSavedID = nil; owner.refresh()
     }
@@ -373,7 +379,8 @@ fileprivate final class ExplorerPane: NSViewController, NSTableViewDataSource, N
         query.kinds = kind.indexOfSelectedItem == 0 ? [] : [ResourceKind.allCases[kind.indexOfSelectedItem - 1]]
         query.metadataMatch = descendants.state == .on ? .descendants : .exact; owner.refresh()
     }
-    func controlTextDidChange(_ obj: Notification) { owner.refresh() }
+    func controlTextDidBeginEditing(_ obj: Notification) { owner.focus(self) }
+    func controlTextDidChange(_ obj: Notification) { owner.focus(self); owner.refresh() }
     @objc func openSelection() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         if childNodes.indices.contains(row) { scope = childNodes[row].id; query.nodes = []; owner.refresh() }
