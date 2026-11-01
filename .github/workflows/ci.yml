@@ -21,7 +21,7 @@ jobs:
           for f in FuzzCompile FuzzRender FuzzFind; do go test ./nyxmd -run='^$' -fuzz=$f -fuzztime=60s; done
   swift:
     needs: go
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
