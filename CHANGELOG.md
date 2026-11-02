@@ -2,6 +2,12 @@
 
 Format SemVer. Toute modification du comportement est listée ici avant publication.
 
+## 0.3.1 — 2026-11-02
+
+- **Performance** : `ParseNotes` (et `notes.parse`, `NotedDocument`) convertit toutes les positions en une seule lecture du texte.
+  Document de 330 Ko avec ≈ 8 000 repères : 687 ms → 2,7 ms. Résultats inchangés (contrat notes 1, fuzzing).
+- CI : runners macOS 15 (macOS 14 retiré par GitHub le 2026-11-02).
+
 ## 0.3.0 — 2026-10-24
 
 Interface C : version 3 (ajouts uniquement ; les opérations 0.2.0 sont inchangées, mais l'adaptateur Swift exige l'interface 3).

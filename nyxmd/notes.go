@@ -17,6 +17,7 @@ package nyxmd
 // (\n, \\, et --\> pour -->). Toutes les positions publiques sont en caractères Unicode (runes).
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -231,6 +232,24 @@ type parsedNotes struct {
 
 func runeOffset(s string, b int) int { return utf8.RuneCountInString(s[:b]) }
 
+// runeOffsets convertit des positions en octets en positions en runes en une seule lecture du texte
+// (0.3.1 : avant, chaque repère recomptait depuis le début — coût quadratique sur les longs documents).
+func runeOffsets(s string, bs []int) map[int]int {
+	sorted := append([]int(nil), bs...)
+	sort.Ints(sorted)
+	out := make(map[int]int, len(sorted))
+	r, prev := 0, 0
+	for _, b := range sorted {
+		if _, ok := out[b]; ok {
+			continue
+		}
+		r += utf8.RuneCountInString(s[prev:b])
+		prev = b
+		out[b] = r
+	}
+	return out
+}
+
 func byteOffset(s string, r int) (int, bool) {
 	if r < 0 {
 		return 0, false
@@ -413,6 +432,14 @@ func (p *parsedNotes) pairs() (open map[string]*bmarker, close map[string]*bmark
 func ParseNotes(text string) NotesDoc {
 	p := parseNotes(text)
 	open, close := p.pairs()
+	pos := make([]int, 0, 2*len(p.markers)+2)
+	for _, m := range p.markers {
+		pos = append(pos, m.s, m.e)
+	}
+	if p.blockFound {
+		pos = append(pos, p.blockStart, p.blockEnd)
+	}
+	ro := runeOffsets(text, pos)
 	doc := NotesDoc{Notes: []Note{}, Markers: []Marker{}, Extra: p.extra, Diagnostics: p.diags}
 	if doc.Diagnostics == nil {
 		doc.Diagnostics = []Diagnostic{}
@@ -423,10 +450,10 @@ func ParseNotes(text string) NotesDoc {
 		note := Note{ID: n.id, Color: n.color, Text: n.text, Start: -1, End: -1, Orphan: true}
 		if o := open[n.id]; o != nil {
 			note.Orphan = false
-			note.Start = runeOffset(text, o.e)
+			note.Start = ro[o.e]
 			note.End = note.Start
 			if c := close[n.id]; c != nil {
-				note.End = runeOffset(text, c.s)
+				note.End = ro[c.s]
 			}
 		}
 		doc.Notes = append(doc.Notes, note)
@@ -434,7 +461,7 @@ func ParseNotes(text string) NotesDoc {
 	seenOpen := map[string]bool{}
 	for i := range p.markers {
 		m := &p.markers[i]
-		rs, re := runeOffset(text, m.s), runeOffset(text, m.e)
+		rs, re := ro[m.s], ro[m.e]
 		doc.Markers = append(doc.Markers, Marker{m.id, m.closing, rs, re})
 		switch {
 		case !m.closing && seenOpen[m.id]:
@@ -449,7 +476,7 @@ func ParseNotes(text string) NotesDoc {
 		}
 	}
 	if p.blockFound {
-		doc.Block = &Span{runeOffset(text, p.blockStart), runeOffset(text, p.blockEnd)}
+		doc.Block = &Span{ro[p.blockStart], ro[p.blockEnd]}
 	}
 	doc.Masked = maskNotes(p)
 	return doc

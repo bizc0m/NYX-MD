@@ -568,3 +568,17 @@ func FuzzNotes(f *testing.F) {
 		}
 	})
 }
+
+// 0.3.1 : ParseNotes linéaire (≈ 8 000 repères sur 330 Ko). Avant : ~690 ms (positions recomptées depuis le début).
+func BenchmarkParseNotesLarge(b *testing.B) {
+	line := "Le #client ACME a validé le budget <!--n1-->passage<!--/n1--> fin.\n- [ ] relancer\n"
+	var sb strings.Builder
+	for sb.Len() < 330000 {
+		sb.WriteString(line)
+	}
+	text := sb.String() + "\n<!-- notes v1\n[n1] (rouge) x\n-->\n"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ParseNotes(text)
+	}
+}

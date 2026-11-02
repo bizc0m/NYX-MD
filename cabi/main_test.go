@@ -18,7 +18,7 @@ func call(t *testing.T, req string) map[string]any {
 }
 
 func TestABI(t *testing.T) {
-	if r := call(t, `{"op":"version"}`); r["version"] != "0.3.0" || r["abi"].(float64) != 3 {
+	if r := call(t, `{"op":"version"}`); r["version"] != "0.3.1" || r["abi"].(float64) != 3 {
 		t.Fatalf("version %v", r)
 	}
 	r := call(t, `{"op":"search.match","query":"(client OR fournisseur) AND NOT archivé","documents":[{"text":"client"},{"text":"fournisseur archivé"}]}`)

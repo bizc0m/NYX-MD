@@ -13,7 +13,7 @@ final class NyxMDTests: XCTestCase {
     }
 
     func testVersion() {
-        XCTAssertEqual(NyxMD.version, "0.3.0")
+        XCTAssertEqual(NyxMD.version, "0.3.1")
         XCTAssertNil(NyxMD.compatibilityError)
     }
 
@@ -86,7 +86,7 @@ final class NyxMDTests: XCTestCase {
 final class NyxMD02Tests: XCTestCase {
     func testABICompatible() {
         XCTAssertNil(NyxMD.compatibilityError)
-        XCTAssertEqual(NyxMD.version, "0.3.0")
+        XCTAssertEqual(NyxMD.version, "0.3.1")
         XCTAssertNil(NyxMD.compatibilityError)
     }
 
