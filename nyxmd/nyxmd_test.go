@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -580,5 +581,79 @@ func BenchmarkParseNotesLarge(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ParseNotes(text)
+	}
+}
+
+// 0.4 : le corpus donne exactement les mêmes résultats et plages que Query.Find, document par document,
+// sur tous les cas du contrat de recherche, avec et sans accents ignorés, et après remplacement.
+func TestCorpusEquivalentToFind(t *testing.T) {
+	var v searchVectors
+	load(t, "../testdata/search.json", &v)
+	c := NewCorpus()
+	c.Put(v.Documents)
+	for _, fold := range []bool{false, true} {
+		for _, cs := range v.Cases {
+			q, err := CompileWith(cs.Query, Options{FoldAccents: fold})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hits := map[string][]Span{}
+			for _, h := range c.Find(q, true) {
+				hits[h.ID] = h.Spans
+			}
+			for id, d := range v.Documents {
+				ok, spans := q.Find(d)
+				got, found := hits[id]
+				if ok != found || (ok && !reflect.DeepEqual(nonNilSpans(spans), got)) {
+					t.Fatalf("%q fold=%v doc %s : corpus %v %v, Find %v %v", cs.Query, fold, id, found, got, ok, spans)
+				}
+			}
+		}
+	}
+	// Remplacement : les mots en cache de l'ancien texte ne servent plus.
+	q, _ := Compile("catalogue")
+	c.Put(map[string]Document{"nyx": {Text: "un catalogue"}})
+	if h := c.Find(q, true); len(h) != 1 || h[0].ID != "nyx" || !reflect.DeepEqual(h[0].Spans, []Span{{3, 12}}) {
+		t.Fatalf("remplacement : %v", h)
+	}
+	c.Remove([]string{"nyx"})
+	if h := c.Find(q, false); len(h) != 0 || c.Len() != len(v.Documents)-1 {
+		t.Fatalf("retrait : %v (%d)", h, c.Len())
+	}
+	// Requête vide : tous les documents, ordre des identifiants.
+	all, _ := Compile("")
+	ids := c.IDs()
+	h := c.Find(all, false)
+	if len(h) != len(ids) || h[0].ID != ids[0] {
+		t.Fatalf("requête vide : %v", h)
+	}
+}
+
+func nonNilSpans(s []Span) []Span {
+	if s == nil {
+		return []Span{}
+	}
+	return s
+}
+
+// 0.4 : recherche répétée sur un corpus de 2 000 documents d'environ 4 Ko (mots en cache).
+func BenchmarkCorpusFind(b *testing.B) {
+	words := strings.Fields("client fournisseur devis facture relance projet planning budget réunion livraison archivé urgent compta contrat note idée équipe")
+	docs := map[string]Document{}
+	for i := 0; i < 2000; i++ {
+		var sb strings.Builder
+		for j := 0; j < 500; j++ {
+			sb.WriteString(words[(i*7+j*13)%len(words)])
+			sb.WriteByte(' ')
+		}
+		docs[strconv.Itoa(i)] = Document{Text: sb.String()}
+	}
+	c := NewCorpus()
+	c.Put(docs)
+	q, _ := Compile("(client OR fournisseur) AND NOT archivé")
+	c.Find(q, true)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Find(q, true)
 	}
 }

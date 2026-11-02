@@ -2,6 +2,19 @@
 
 Format SemVer. Toute modification du comportement est listée ici avant publication.
 
+## 0.4.0 — 2026-11-02
+
+Interface C : version 4 (ajouts uniquement ; l'adaptateur Swift exige l'interface 4).
+
+- **Corpus gardé dans le moteur** (`Corpus`, `corpus.create/put/remove/size/find/release`, Swift `NyxCorpus`) : les documents
+  restent dans le moteur entre deux recherches ; l'appelant ne transmet que ce qui change. Recherche répartie sur les cœurs,
+  résultats triés par identifiant. Mesure (2 000 notes, 6 Mo, Mac M) : requête 9 ms, requête qui trouve tout 19 ms, mémoire +0,1 Mo.
+  Option `cache_words` / `cacheWords` : mots découpés gardés (0,4 ms / 8,6 ms) au prix d'environ 5 × la taille des textes
+  par réglage d'accents (+31,6 Mo ici) — désactivée par défaut.
+- **Recherche** : `Query.Find` ne découpe plus le texte deux fois (Match puis plages). Résultats inchangés.
+- **Contrat** : le corpus donne exactement les mêmes résultats et plages que `Query.Find` sur tous les cas de `testdata/search.json`,
+  avec et sans accents ignorés (Go), et en Swift ; remplacement et retrait testés ; détecteur de courses (`-race`) propre.
+
 ## 0.3.1 — 2026-11-02
 
 - **Performance** : `ParseNotes` (et `notes.parse`, `NotedDocument`) convertit toutes les positions en une seule lecture du texte.

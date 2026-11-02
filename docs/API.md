@@ -1,4 +1,4 @@
-# API NYX-MD 0.3.0
+# API NYX-MD 0.4.0
 
 Un moteur Go unique (`nyxmd/`), exposé par :
 
@@ -53,6 +53,24 @@ Swift : `NyxQuery(_:options:)` (compilée une fois, `match`, `find`, `terms`, li
 | `missing_closing_parenthesis` | parenthèse ouvrante non fermée |
 | `invalid_proximity` | `NEAR/x` invalide |
 | `near_operand` | NEAR appliqué à un groupe ou une métadonnée |
+
+## Corpus (0.4)
+
+Documents gardés dans le moteur entre deux recherches (identifiant libre, par exemple le chemin du fichier).
+
+| Go | Swift | Interface C | Rôle |
+|---|---|---|---|
+| `NewCorpus()`, champ `CacheWords` | `NyxCorpus(cacheWords:)` | `corpus.create` (`cache_words`) → `corpus` | créer |
+| `Put(map[id]Document)` | `put([id: NyxDocument])` | `corpus.put` (`entries` : `{id, text, tags, entities, notes, colors}`) | ajouter ou remplacer |
+| `Remove([]id)` | `remove([id])` | `corpus.remove` (`ids`) | retirer |
+| `Len()`, `IDs()` | `count` | `corpus.size` | taille |
+| `Find(q, withSpans) []CorpusHit` | `find(query, spans:)` | `corpus.find` (`handle` ou `query` + `options`, `spans`) → `hits` | chercher |
+| — | libéré à la destruction | `corpus.release` | libérer (64 corpus au plus) |
+
+- Résultats triés par identifiant ; `spans` en runes (scalaires Unicode), comme `Query.Find`.
+- Sans `CacheWords`, le texte est découpé à chaque recherche, en parallèle (jusqu'à 8 cœurs) : pas de mémoire supplémentaire.
+  Avec, les mots découpés sont gardés : beaucoup plus rapide, environ 5 × la taille des textes par réglage d'accents.
+- Erreurs : `unknown_corpus`, `too_many_corpora`, plus celles de la recherche.
 
 ## Couche de notes (0.3)
 
@@ -117,10 +135,10 @@ Swift : `NyxVariables.render/validate/references/complete/parsePersonal/markdown
 ## Interface C (`nyxmd_call`)
 
 Requête JSON → réponse JSON `{"ok": true, …}` ou `{"ok": false, "error": {"code", "message", "position"}}`.
-Libérer chaque réponse avec `nyxmd_free`. Version d'interface (`abi`) : **3**. Opérations : `version`,
+Libérer chaque réponse avec `nyxmd_free`. Version d'interface (`abi`) : **4**. Opérations : `version`,
 `search.compile` (→ `handle`), `search.release`, `search.validate`, `search.match`, `search.find`
 (ces trois dernières acceptent `handle` ou `query` + `options`), `variables.render`, `variables.validate`, `variables.references`, `variables.complete`,
 `variables.parse_personal`, `markdown.link`, `notes.parse`, `notes.strip`, `notes.footnotes`, `notes.add`, `notes.update`,
-`notes.delete`, `notes.colors` (champs `text`, `start`, `end`, `color`, `body`, `id`). Erreurs d'appel : `bad_request`, `unknown_op`, `unknown_handle`, `too_many_handles`, `internal_error`
+`notes.delete`, `notes.colors`, `corpus.create`, `corpus.put`, `corpus.remove`, `corpus.size`, `corpus.find`, `corpus.release` (champs `text`, `start`, `end`, `color`, `body`, `id`). Erreurs d'appel : `bad_request`, `unknown_op`, `unknown_handle`, `too_many_handles`, `internal_error`
 (Swift ajoute `abi_mismatch` si la bibliothèque ne correspond pas à l'adaptateur)
 (une panique Go est convertie en erreur, jamais propagée).

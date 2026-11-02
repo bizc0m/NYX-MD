@@ -18,7 +18,7 @@ func call(t *testing.T, req string) map[string]any {
 }
 
 func TestABI(t *testing.T) {
-	if r := call(t, `{"op":"version"}`); r["version"] != "0.3.1" || r["abi"].(float64) != 3 {
+	if r := call(t, `{"op":"version"}`); r["version"] != "0.4.0" || r["abi"].(float64) != 4 {
 		t.Fatalf("version %v", r)
 	}
 	r := call(t, `{"op":"search.match","query":"(client OR fournisseur) AND NOT archivé","documents":[{"text":"client"},{"text":"fournisseur archivé"}]}`)
@@ -63,7 +63,7 @@ func TestHandles(t *testing.T) {
 	if r = call(t, fmt.Sprintf(`{"op":"search.match","handle":%v,"documents":[]}`, h)); r["error"].(map[string]any)["code"] != "unknown_handle" {
 		t.Fatalf("released %v", r)
 	}
-	if r = call(t, `{"op":"version"}`); r["abi"].(float64) != 3 {
+	if r = call(t, `{"op":"version"}`); r["abi"].(float64) != 4 {
 		t.Fatalf("abi %v", r)
 	}
 }
@@ -113,5 +113,42 @@ func TestNotesABI(t *testing.T) {
 	}
 	if r = call(t, `{"op":"notes.colors"}`); len(r["colors"].([]any)) != 8 || r["default"] != "jaune" {
 		t.Fatalf("colors %v", r)
+	}
+}
+
+func TestCorpusABI(t *testing.T) {
+	r := call(t, `{"op":"corpus.create"}`)
+	id := r["corpus"].(float64)
+	put := fmt.Sprintf(`{"op":"corpus.put","corpus":%v,"entries":[{"id":"a.md","text":"Relance du client"},{"id":"b.md","text":"fournisseur archivé","tags":["projet"]},{"id":"c.md","text":"autre"}]}`, id)
+	if r = call(t, put); r["size"].(float64) != 3 {
+		t.Fatalf("put %v", r)
+	}
+	r = call(t, fmt.Sprintf(`{"op":"corpus.find","corpus":%v,"query":"(client OR fournisseur) AND NOT archivé"}`, id))
+	hits := r["hits"].([]any)
+	if len(hits) != 1 || hits[0].(map[string]any)["id"] != "a.md" || len(hits[0].(map[string]any)["spans"].([]any)) != 1 {
+		t.Fatalf("find %v", r)
+	}
+	// Remplacement d'un document, puis retrait.
+	call(t, fmt.Sprintf(`{"op":"corpus.put","corpus":%v,"entries":[{"id":"b.md","text":"fournisseur actif"}]}`, id))
+	r = call(t, fmt.Sprintf(`{"op":"corpus.find","corpus":%v,"query":"fournisseur","spans":false}`, id))
+	if hits = r["hits"].([]any); len(hits) != 1 || hits[0].(map[string]any)["id"] != "b.md" {
+		t.Fatalf("replace %v", r)
+	}
+	call(t, fmt.Sprintf(`{"op":"corpus.remove","corpus":%v,"ids":["b.md","inconnu"]}`, id))
+	if r = call(t, fmt.Sprintf(`{"op":"corpus.size","corpus":%v}`, id)); r["size"].(float64) != 2 {
+		t.Fatalf("remove %v", r)
+	}
+	// Requête compilée réutilisée sur le corpus.
+	q := call(t, `{"op":"search.compile","query":"#projet OR autre"}`)
+	r = call(t, fmt.Sprintf(`{"op":"corpus.find","corpus":%v,"handle":%v}`, id, q["handle"]))
+	if hits = r["hits"].([]any); len(hits) != 1 || hits[0].(map[string]any)["id"] != "c.md" {
+		t.Fatalf("handle %v", r)
+	}
+	if r = call(t, fmt.Sprintf(`{"op":"corpus.find","corpus":%v,"query":"(a"}`, id)); r["error"].(map[string]any)["code"] != "missing_closing_parenthesis" {
+		t.Fatalf("error %v", r)
+	}
+	call(t, fmt.Sprintf(`{"op":"corpus.release","corpus":%v}`, id))
+	if r = call(t, fmt.Sprintf(`{"op":"corpus.size","corpus":%v}`, id)); r["error"].(map[string]any)["code"] != "unknown_corpus" {
+		t.Fatalf("release %v", r)
 	}
 }

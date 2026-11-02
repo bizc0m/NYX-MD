@@ -21,10 +21,20 @@ import (
 
 // ABIVersion augmente quand une opération change ou apparaît. 2 : poignées, search.find, options.
 // 3 : couche de notes (notes.*), champs notes/colors des documents (note:, couleur:).
-const ABIVersion = 3
+// 4 : corpus gardé dans le moteur (corpus.*).
+const ABIVersion = 4
 
 // Requêtes compilées conservées entre les appels (compilées une fois, évaluées sur de nombreux lots).
 const maxHandles = 1024
+
+// Corpus ouverts (documents gardés entre deux recherches).
+const maxCorpora = 64
+
+var (
+	corporaMu  sync.Mutex
+	corpora    = map[int64]*nyxmd.Corpus{}
+	nextCorpus int64
+)
 
 var (
 	handlesMu  sync.Mutex
@@ -49,6 +59,24 @@ type request struct {
 	Color     string           `json:"color"`
 	Body      string           `json:"body"`
 	ID        string           `json:"id"`
+	Corpus    int64            `json:"corpus"`
+	Entries   []corpusEntry    `json:"entries"`
+	IDs       []string         `json:"ids"`
+	Spans     *bool            `json:"spans"`
+	// corpus.create : garder les mots découpés (rapide, ≈ 5 × la taille des textes en mémoire). Défaut : non.
+	CacheWords bool `json:"cache_words"`
+}
+
+// corpusEntry : document du corpus, champs du Document à plat plus son identifiant.
+type corpusEntry struct {
+	ID string `json:"id"`
+	nyxmd.Document
+}
+
+func corpusOf(id int64) *nyxmd.Corpus {
+	corporaMu.Lock()
+	defer corporaMu.Unlock()
+	return corpora[id]
 }
 
 type apiError struct {
@@ -188,6 +216,55 @@ func handle(raw []byte) (resp map[string]any) {
 		return map[string]any{"ok": true, "output": out}
 	case "notes.colors":
 		return map[string]any{"ok": true, "colors": nyxmd.NoteColors, "default": nyxmd.DefaultNoteColor}
+	case "corpus.create":
+		corporaMu.Lock()
+		defer corporaMu.Unlock()
+		if len(corpora) >= maxCorpora {
+			return fail("too_many_corpora", "trop de corpus ouverts (corpus.release oublié ?)")
+		}
+		nextCorpus++
+		c := nyxmd.NewCorpus()
+		c.CacheWords = req.CacheWords
+		corpora[nextCorpus] = c
+		return map[string]any{"ok": true, "corpus": nextCorpus}
+	case "corpus.release":
+		corporaMu.Lock()
+		delete(corpora, req.Corpus)
+		corporaMu.Unlock()
+		return map[string]any{"ok": true}
+	case "corpus.put", "corpus.remove", "corpus.size", "corpus.find":
+		c := corpusOf(req.Corpus)
+		if c == nil {
+			return fail("unknown_corpus", "corpus inconnu ou déjà libéré")
+		}
+		switch req.Op {
+		case "corpus.put":
+			m := make(map[string]nyxmd.Document, len(req.Entries))
+			for _, e := range req.Entries {
+				m[e.ID] = e.Document
+			}
+			c.Put(m)
+		case "corpus.remove":
+			c.Remove(req.IDs)
+		case "corpus.find":
+			var q *nyxmd.Query
+			if req.Handle != 0 {
+				handlesMu.Lock()
+				q = handles[req.Handle]
+				handlesMu.Unlock()
+				if q == nil {
+					return fail("unknown_handle", "requête compilée inconnue ou déjà libérée")
+				}
+			} else {
+				var errResp map[string]any
+				if q, errResp = compileQuery(req); errResp != nil {
+					return errResp
+				}
+			}
+			withSpans := req.Spans == nil || *req.Spans
+			return map[string]any{"ok": true, "hits": c.Find(q, withSpans), "size": c.Len()}
+		}
+		return map[string]any{"ok": true, "size": c.Len()}
 	case "markdown.link":
 		return map[string]any{"ok": true, "output": nyxmd.MarkdownLink(req.Label, req.URL)}
 	default:

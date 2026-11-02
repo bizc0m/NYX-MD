@@ -11,3 +11,10 @@ Champ `contract` : version du contrat (actuellement **2**). La couche de notes a
 - Ajouter un comportement = ajouter des vecteurs (dans la même version du contrat si rien d'existant ne change).
 
 Rejoués aujourd'hui par : `nyxmd/nyxmd_test.go` (Go), `swift/Tests/NyxMDTests` (Swift, à travers l'interface C).
+
+
+## Corpus (0.4)
+
+Le corpus n'a pas de fichier de vecteurs propre : il doit donner, pour chaque cas de `testdata/search.json`, exactement les mêmes
+résultats et plages que `Query.Find` document par document (avec et sans accents ignorés). Vérifié par `TestCorpusEquivalentToFind` (Go)
+et `testCorpus` (Swift, à travers l'interface C).

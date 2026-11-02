@@ -13,7 +13,7 @@ final class NyxMDTests: XCTestCase {
     }
 
     func testVersion() {
-        XCTAssertEqual(NyxMD.version, "0.3.1")
+        XCTAssertEqual(NyxMD.version, "0.4.0")
         XCTAssertNil(NyxMD.compatibilityError)
     }
 
@@ -86,7 +86,7 @@ final class NyxMDTests: XCTestCase {
 final class NyxMD02Tests: XCTestCase {
     func testABICompatible() {
         XCTAssertNil(NyxMD.compatibilityError)
-        XCTAssertEqual(NyxMD.version, "0.3.1")
+        XCTAssertEqual(NyxMD.version, "0.4.0")
         XCTAssertNil(NyxMD.compatibilityError)
     }
 
@@ -179,5 +179,26 @@ final class NyxMD02Tests: XCTestCase {
             XCTAssertEqual(try NyxSearch.match(q, documents: [try NyxNotes.searchDocument(text(c))]), [c["match"] as! Bool], q)
         }
         XCTAssertEqual(try NyxNotes.colors().default, "jaune")
+    }
+
+    /// 0.4 : corpus — mêmes résultats que la recherche classique, mise à jour et retrait, libération.
+    func testCorpus() throws {
+        let c = try NyxCorpus()
+        XCTAssertEqual(try c.put(["a.md": NyxDocument(text: "Relance du client Élodie"),
+                                  "b.md": NyxDocument(text: "fournisseur archivé", tags: ["projet"]),
+                                  "c.md": NyxDocument(text: "autre", notes: ["voir compta"], colors: ["rouge"])]), 3)
+        let q = try NyxQuery("(client OR fournisseur) AND NOT archivé")
+        let hits = try c.find(q)
+        XCTAssertEqual(hits.map(\.id), ["a.md"])
+        XCTAssertEqual(hits.first?.spans.map { [$0.start, $0.end] }, [[11, 17]])
+        XCTAssertEqual(try c.find(NyxQuery("#projet OR note:compta"), spans: false).map(\.id), ["b.md", "c.md"])
+        try c.put(["b.md": NyxDocument(text: "fournisseur actif")])
+        XCTAssertEqual(try c.find(q).map(\.id), ["a.md", "b.md"])
+        XCTAssertEqual(try c.remove(["a.md"]), 2)
+        XCTAssertEqual(c.count, 2)
+        let cached = try NyxCorpus(cacheWords: true)
+        try cached.put(["x": NyxDocument(text: "client")])
+        XCTAssertEqual(try cached.find(q).map(\.id), ["x"])
+        XCTAssertEqual(try cached.find(q).map(\.id), ["x"], "seconde recherche sur mots en cache")
     }
 }

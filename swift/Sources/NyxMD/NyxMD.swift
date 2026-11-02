@@ -108,7 +108,7 @@ enum Engine {
     }
 
     /// Version d'interface attendue par cet adaptateur (voir cabi/main.go ABIVersion).
-    static let expectedABI = 3
+    static let expectedABI = 4
 
     /// Vérifiée une seule fois : une bibliothèque CNyxMD d'une autre version donne une erreur claire.
     static let abiCheck: NyxError? = {
@@ -193,7 +193,7 @@ public struct NyxFindResult: Decodable, Equatable, Sendable {
 /// Requête compilée une seule fois puis évaluée sur autant de documents que voulu.
 /// Libérée automatiquement à la destruction de l'objet.
 public final class NyxQuery {
-    private let handle: Int64
+    let handle: Int64
     /// Termes et expressions non niés de la requête.
     public let terms: [String]
 
@@ -244,6 +244,50 @@ public enum NyxSearch {
     /// Raccourci : compile et évalue en un appel. Pour plusieurs lots, préférer NyxQuery.
     public static func match(_ query: String, documents: [NyxDocument], options: NyxSearchOptions = .init()) throws -> [Bool] {
         try NyxQuery(query, options: options).match(documents)
+    }
+}
+
+// MARK: - Corpus (0.4)
+
+/// Document trouvé dans un corpus : identifiant et plages (scalaires Unicode) des termes trouvés.
+public struct NyxCorpusHit: Decodable, Equatable, Sendable {
+    public let id: String
+    public let spans: [NyxFindResult.Span]
+}
+
+/// Documents gardés dans le moteur entre deux recherches : on ne transmet que ce qui change (`put` / `remove`),
+/// la recherche ne renvoie plus tous les textes. Libéré automatiquement à la destruction de l'objet.
+/// `cacheWords` : mots découpés gardés en mémoire (≈ ×30 plus rapide, ≈ 5 × la taille des textes) ; défaut : non.
+public final class NyxCorpus {
+    private let id: Int64
+    private struct Created: Decodable { let corpus: Int64 }
+    private struct Size: Decodable { let size: Int }
+    private struct Found: Decodable { let hits: [NyxCorpusHit] }
+    private struct Empty: Decodable {}
+
+    public init(cacheWords: Bool = false) throws {
+        id = try Engine.call(["op": "corpus.create", "cache_words": cacheWords], as: Created.self).corpus
+    }
+
+    deinit { _ = try? Engine.rawCall(["op": "corpus.release", "corpus": id], as: Empty.self) }
+
+    /// Ajoute ou remplace des documents (identifiant → document).
+    @discardableResult
+    public func put(_ docs: [String: NyxDocument]) throws -> Int {
+        let entries = docs.map { id, d -> [String: Any] in var j = d.json; j["id"] = id; return j }
+        return try Engine.call(["op": "corpus.put", "corpus": id, "entries": entries], as: Size.self).size
+    }
+
+    @discardableResult
+    public func remove(_ ids: [String]) throws -> Int {
+        try Engine.call(["op": "corpus.remove", "corpus": id, "ids": ids], as: Size.self).size
+    }
+
+    public var count: Int { (try? Engine.call(["op": "corpus.size", "corpus": id], as: Size.self).size) ?? 0 }
+
+    /// Documents qui correspondent, dans l'ordre des identifiants. `spans: false` : plages non calculées.
+    public func find(_ query: NyxQuery, spans: Bool = true) throws -> [NyxCorpusHit] {
+        try Engine.call(["op": "corpus.find", "corpus": id, "handle": query.handle, "spans": spans], as: Found.self).hits
     }
 }
 

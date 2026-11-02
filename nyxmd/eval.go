@@ -59,17 +59,62 @@ func (q *Query) Match(d Document) bool {
 	if q.root == nil {
 		return true
 	}
-	return q.root.Match(d)
+	return q.root.match(d, newWordSource(d.Text, nil))
 }
 
 // Find évalue la requête et renvoie, si elle correspond, les plages de texte trouvées
 // par les termes, expressions et NEAR non niés (triées, sans chevauchement).
 // Les métadonnées (#tag, @entité, note:, couleur:) ne produisent pas de plage.
 func (q *Query) Find(d Document) (bool, []Span) {
-	if !q.Match(d) || q.root == nil {
-		return q != nil && q.root == nil, nil
+	return q.find(d, newWordSource(d.Text, nil))
+}
+
+// wordSource découpe le texte en mots au plus une fois par réglage d'accents (0.4 : Find ne découpe plus deux fois ;
+// un Corpus fournit ses mots déjà découpés).
+type wordSource struct {
+	text  string
+	cache *[2][]word
+	have  [2]bool
+}
+
+func newWordSource(text string, cache *[2][]word) *wordSource {
+	ws := &wordSource{text: text, cache: cache}
+	if cache != nil {
+		ws.have = [2]bool{cache[0] != nil, cache[1] != nil}
 	}
-	ws := tokenize(d.Text, q.opts.FoldAccents)
+	return ws
+}
+
+func (s *wordSource) words(fold bool) []word {
+	i := 0
+	if fold {
+		i = 1
+	}
+	if s.cache == nil {
+		s.cache = &[2][]word{}
+	}
+	if !s.have[i] {
+		w := tokenize(s.text, fold)
+		if w == nil {
+			w = []word{}
+		}
+		s.cache[i] = w
+		s.have[i] = true
+	}
+	return s.cache[i]
+}
+
+func (q *Query) find(d Document, src *wordSource) (bool, []Span) {
+	if q == nil {
+		return false, nil
+	}
+	if q.root == nil {
+		return true, nil
+	}
+	if !q.root.match(d, src) {
+		return false, nil
+	}
+	ws := src.words(q.opts.FoldAccents)
 	var spans []Span
 	var walk func(n *Node, negated bool)
 	walk = func(n *Node, negated bool) {
@@ -170,9 +215,9 @@ func compile(n *Node, opts Options) {
 }
 
 // Match évalue l'AST. Le texte est découpé en mots une seule fois par appel.
-func (n *Node) Match(d Document) bool {
-	var ws []word
-	split := false
+func (n *Node) Match(d Document) bool { return n.match(d, newWordSource(d.Text, nil)) }
+
+func (n *Node) match(d Document, src *wordSource) bool {
 	var eval func(n *Node) bool
 	eval = func(n *Node) bool {
 		if n == nil {
@@ -207,10 +252,7 @@ func (n *Node) Match(d Document) bool {
 			}
 			return false
 		default:
-			if !split {
-				ws, split = tokenize(d.Text, n.fold), true
-			}
-			return n.found(ws)
+			return n.found(src.words(n.fold))
 		}
 	}
 	return eval(n)
